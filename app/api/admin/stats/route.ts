@@ -20,6 +20,11 @@ export async function GET() {
     return NextResponse.json({ error: "Could not load stats." }, { status: 500 });
   }
 
+  const { count: aiTestPending } = await supabase
+    .from("ai_test_bookings")
+    .select("*", { count: "exact", head: true })
+    .eq("status", "pending");
+
   const rows = bookings ?? [];
   const now = new Date();
   const thisMonth = now.getUTCMonth();
@@ -58,5 +63,6 @@ export async function GET() {
     completed,
     revenueThisMonth,
     awaitingResult,
+    aiTestPending: aiTestPending ?? 0,
   });
 }

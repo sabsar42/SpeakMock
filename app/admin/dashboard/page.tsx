@@ -19,6 +19,7 @@ interface Stats {
   completed: number;
   revenueThisMonth: number;
   awaitingResult: number;
+  aiTestPending: number;
 }
 
 const STAT_CARDS: { key: keyof Stats; label: string; href: string }[] = [
@@ -27,6 +28,7 @@ const STAT_CARDS: { key: keyof Stats; label: string; href: string }[] = [
   { key: "confirmed", label: "Confirmed", href: "/admin/bookings?status=confirmed" },
   { key: "completed", label: "Completed", href: "/admin/bookings?status=completed" },
   { key: "revenueThisMonth", label: "Revenue This Month", href: "/admin/bookings?status=confirmed" },
+  { key: "aiTestPending", label: "AI Tests Pending", href: "/admin/ai-tests" },
 ];
 
 const badgeVariantByStatus: Record<
@@ -105,25 +107,31 @@ export default function AdminDashboardPage() {
         onSlotsCreated={loadData}
       />
 
-      <div className="grid grid-cols-2 gap-4 sm:grid-cols-5">
-        {STAT_CARDS.map((card) => (
-          <button
-            key={card.key}
-            onClick={() => router.push(card.href)}
-            className="rounded-xl border border-border bg-white p-4 text-left transition hover:border-border"
-          >
-            <p className="text-2xl font-bold text-text-primary">
-              {stats
-                ? card.key === "revenueThisMonth"
-                  ? `৳${stats.revenueThisMonth.toLocaleString()}`
-                  : stats[card.key]
-                : "—"}
-            </p>
-            <p className="mt-1 text-xs font-medium uppercase tracking-wide text-text-muted">
-              {card.label}
-            </p>
-          </button>
-        ))}
+      <div className="grid grid-cols-2 gap-4 sm:grid-cols-3 lg:grid-cols-6">
+        {STAT_CARDS.map((card) => {
+          const isAiTestCard = card.key === "aiTestPending";
+          const hasPending = isAiTestCard && (stats?.aiTestPending ?? 0) > 0;
+          return (
+            <button
+              key={card.key}
+              onClick={() => router.push(card.href)}
+              className={`rounded-xl border p-4 text-left transition hover:border-border ${
+                hasPending ? "border-error/40 bg-red-50" : "border-border bg-white"
+              }`}
+            >
+              <p className={`text-2xl font-bold ${hasPending ? "text-error" : "text-text-primary"}`}>
+                {stats
+                  ? card.key === "revenueThisMonth"
+                    ? `৳${stats.revenueThisMonth.toLocaleString()}`
+                    : stats[card.key]
+                  : "—"}
+              </p>
+              <p className="mt-1 text-xs font-medium uppercase tracking-wide text-text-muted">
+                {card.label}
+              </p>
+            </button>
+          );
+        })}
       </div>
 
       <div className="mt-6 grid grid-cols-1 gap-6 lg:grid-cols-2">

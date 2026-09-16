@@ -5,6 +5,7 @@ import Link from "next/link";
 import { usePathname, useRouter } from "next/navigation";
 import {
   Bell,
+  Bot,
   Calendar,
   ClipboardList,
   ExternalLink,
@@ -20,6 +21,7 @@ const NAV_LINKS = [
   { href: "/admin/slots", label: "Slots", icon: Calendar },
   { href: "/admin/bookings", label: "Bookings", icon: ClipboardList },
   { href: "/admin/results", label: "Results", icon: FileText },
+  { href: "/admin/ai-tests", label: "AI Tests", icon: Bot },
 ];
 
 const POLL_INTERVAL_MS = 60_000;
@@ -35,6 +37,7 @@ export function AdminShell({ title, children, headerActions }: AdminShellProps) 
   const router = useRouter();
   const [pendingCount, setPendingCount] = useState(0);
   const [awaitingResultCount, setAwaitingResultCount] = useState(0);
+  const [aiTestPendingCount, setAiTestPendingCount] = useState(0);
   const [bellOpen, setBellOpen] = useState(false);
 
   useEffect(() => {
@@ -48,6 +51,7 @@ export function AdminShell({ title, children, headerActions }: AdminShellProps) 
         if (!cancelled) {
           setPendingCount(data.pending ?? 0);
           setAwaitingResultCount(data.awaitingResult ?? 0);
+          setAiTestPendingCount(data.aiTestPending ?? 0);
         }
       } catch {
         // Silent — badges just won't update this cycle.
@@ -68,7 +72,7 @@ export function AdminShell({ title, children, headerActions }: AdminShellProps) 
     router.refresh();
   }
 
-  const notificationCount = pendingCount + awaitingResultCount;
+  const notificationCount = pendingCount + awaitingResultCount + aiTestPendingCount;
 
   return (
     <div className="flex min-h-screen bg-background">
@@ -90,7 +94,9 @@ export function AdminShell({ title, children, headerActions }: AdminShellProps) 
                 ? pendingCount
                 : link.href === "/admin/results"
                   ? awaitingResultCount
-                  : 0;
+                  : link.href === "/admin/ai-tests"
+                    ? aiTestPendingCount
+                    : 0;
 
             return (
               <Link
@@ -111,7 +117,9 @@ export function AdminShell({ title, children, headerActions }: AdminShellProps) 
                   <span
                     className={cn(
                       "rounded-full px-1.5 py-0.5 text-[10px] font-semibold text-white",
-                      link.href === "/admin/bookings" ? "bg-error" : "bg-warning"
+                      link.href === "/admin/bookings" || link.href === "/admin/ai-tests"
+                        ? "bg-error"
+                        : "bg-warning"
                     )}
                   >
                     {badgeCount}
@@ -186,6 +194,18 @@ export function AdminShell({ title, children, headerActions }: AdminShellProps) 
                           >
                             {awaitingResultCount} result
                             {awaitingResultCount === 1 ? "" : "s"} not uploaded yet
+                          </Link>
+                        </li>
+                      )}
+                      {aiTestPendingCount > 0 && (
+                        <li>
+                          <Link
+                            href="/admin/ai-tests"
+                            className="text-text-secondary hover:text-text-primary"
+                            onClick={() => setBellOpen(false)}
+                          >
+                            {aiTestPendingCount} AI test booking
+                            {aiTestPendingCount === 1 ? "" : "s"} awaiting verification
                           </Link>
                         </li>
                       )}

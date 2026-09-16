@@ -18,5 +18,7 @@ export const config = {
     "/admin/slots/:path*",
     "/admin/bookings/:path*",
     "/admin/results/:path*",
+    "/admin/ai-test/:path*",
+    "/admin/ai-tests/:path*",
   ],
 };
