@@ -8,14 +8,16 @@ import { SCORING_SYSTEM_PROMPT } from "@/lib/ai-test/scoring-prompt";
 import { AiTestReportPdf } from "@/lib/ai-test/pdf/report";
 import type { AiTestBooking, AiTestSession } from "@/lib/types";
 
-const openrouter = new OpenAI({
-  baseURL: "https://openrouter.ai/api/v1",
-  apiKey: process.env.OPENROUTER_API_KEY,
-  defaultHeaders: {
-    "HTTP-Referer": process.env.NEXT_PUBLIC_APP_URL ?? "http://localhost:3000",
-    "X-Title": "SpeakMock",
-  },
-});
+function createOpenRouterClient() {
+  return new OpenAI({
+    baseURL: "https://openrouter.ai/api/v1",
+    apiKey: process.env.OPENROUTER_API_KEY,
+    defaultHeaders: {
+      "HTTP-Referer": process.env.NEXT_PUBLIC_APP_URL ?? "http://localhost:3000",
+      "X-Title": "SpeakMock",
+    },
+  });
+}
 
 interface ScoredCriterion {
   score: number;
@@ -79,6 +81,7 @@ export async function POST(request: NextRequest) {
   let parsed: ScoringResponse;
 
   try {
+    const openrouter = createOpenRouterClient();
     const completion = await openrouter.chat.completions.create({
       model,
       messages: [

@@ -2,8 +2,6 @@ import { NextRequest, NextResponse } from "next/server";
 import Groq from "groq-sdk";
 import { supabaseServer } from "@/lib/supabase/server";
 
-const groq = new Groq({ apiKey: process.env.GROQ_API_KEY });
-
 export async function POST(request: NextRequest) {
   const formData = await request.formData();
   const audio = formData.get("audio");
@@ -28,6 +26,7 @@ export async function POST(request: NextRequest) {
   }
 
   try {
+    const groq = new Groq({ apiKey: process.env.GROQ_API_KEY });
     const result = await groq.audio.transcriptions.create({
       file: audio,
       model: "whisper-large-v3-turbo",

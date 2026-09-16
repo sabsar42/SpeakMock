@@ -1,7 +1,5 @@
 import Groq from "groq-sdk";
 
-const groq = new Groq({ apiKey: process.env.GROQ_API_KEY });
-
 const TTS_MODEL = "canopylabs/orpheus-v1-english";
 const TTS_VOICE = process.env.GROQ_TTS_VOICE ?? "troy";
 const SIMLI_SAMPLE_RATE = 16000;
@@ -13,6 +11,7 @@ const SIMLI_SAMPLE_RATE = 16000;
  * isn't already 16kHz (Orpheus's sample_rate isn't configurable per-request).
  */
 export async function textToPcm16(text: string): Promise<Uint8Array> {
+  const groq = new Groq({ apiKey: process.env.GROQ_API_KEY });
   const response = await groq.audio.speech.create({
     model: TTS_MODEL,
     voice: TTS_VOICE,
