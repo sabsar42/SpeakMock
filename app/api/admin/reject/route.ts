@@ -2,6 +2,7 @@ import { NextRequest, NextResponse } from "next/server";
 import { supabaseServer } from "@/lib/supabase/server";
 import { requireAdmin } from "@/lib/require-admin";
 import { sendBookingRejectedEmail } from "@/lib/resend/emails";
+import { logActivity } from "@/lib/log-activity";
 import type { Booking } from "@/lib/types";
 
 export async function POST(request: NextRequest) {
@@ -58,6 +59,8 @@ export async function POST(request: NextRequest) {
   } catch (emailError) {
     console.error("Failed to send rejection email:", emailError);
   }
+
+  await logActivity(supabase, booking_id, "rejected", rejection_reason.trim());
 
   return NextResponse.json({ success: true });
 }

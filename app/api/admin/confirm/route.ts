@@ -3,6 +3,7 @@ import { nanoid } from "nanoid";
 import { supabaseServer } from "@/lib/supabase/server";
 import { requireAdmin } from "@/lib/require-admin";
 import { sendBookingConfirmedEmail } from "@/lib/resend/emails";
+import { logActivity } from "@/lib/log-activity";
 import type { Booking } from "@/lib/types";
 
 export async function POST(request: NextRequest) {
@@ -50,7 +51,11 @@ export async function POST(request: NextRequest) {
 
   const { error: updateError } = await supabase
     .from("bookings")
-    .update({ payment_status: "verified", booking_status: "confirmed" })
+    .update({
+      payment_status: "verified",
+      booking_status: "confirmed",
+      confirmed_at: new Date().toISOString(),
+    })
     .eq("id", booking_id);
 
   if (updateError) {
@@ -81,6 +86,8 @@ export async function POST(request: NextRequest) {
   } catch (emailError) {
     console.error("Failed to send confirmation email:", emailError);
   }
+
+  await logActivity(supabase, booking_id, "confirmed", `Meet link: ${meet_link.trim()}`);
 
   return NextResponse.json({ success: true, token });
 }

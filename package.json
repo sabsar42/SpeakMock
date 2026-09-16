@@ -32,7 +32,12 @@
     "date-fns": "^4.1.0",
     "date-fns-tz": "^3.2.0",
     "react-day-picker": "^10.0.1",
-    "tailwindcss-animate": "^1.0.7"
+    "tailwindcss-animate": "^1.0.7",
+    "@fullcalendar/core": "6.1.21",
+    "@fullcalendar/react": "6.1.21",
+    "@fullcalendar/daygrid": "6.1.21",
+    "@fullcalendar/timegrid": "6.1.21",
+    "@fullcalendar/interaction": "6.1.21"
   },
   "devDependencies": {
     "@types/node": "^20",

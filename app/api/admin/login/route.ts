@@ -4,6 +4,7 @@ import {
   ADMIN_COOKIE_NAME,
   ADMIN_COOKIE_MAX_AGE,
 } from "@/lib/admin-auth";
+import { getClientIp, isRateLimited } from "@/lib/rate-limit";
 
 function timingSafeStringEqual(a: string, b: string): boolean {
   if (a.length !== b.length) return false;
@@ -15,6 +16,14 @@ function timingSafeStringEqual(a: string, b: string): boolean {
 }
 
 export async function POST(request: NextRequest) {
+  const ip = getClientIp(request);
+  if (isRateLimited(`admin-login:${ip}`)) {
+    return NextResponse.json(
+      { error: "Too many login attempts. Please try again in a few minutes." },
+      { status: 429 }
+    );
+  }
+
   let body: { password?: string };
   try {
     body = await request.json();

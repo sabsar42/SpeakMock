@@ -1,6 +1,7 @@
 import { NextRequest, NextResponse } from "next/server";
 import { supabaseServer } from "@/lib/supabase/server";
 import { requireAdmin } from "@/lib/require-admin";
+import { logActivity } from "@/lib/log-activity";
 
 const SEVENTY_TWO_HOURS_MS = 72 * 60 * 60 * 1000;
 
@@ -48,7 +49,7 @@ export async function POST(request: NextRequest) {
 
   const { error: updateBookingError } = await supabase
     .from("bookings")
-    .update({ booking_status: "completed" })
+    .update({ booking_status: "completed", completed_at: now.toISOString() })
     .eq("id", booking_id);
 
   if (updateBookingError) {
@@ -66,6 +67,8 @@ export async function POST(request: NextRequest) {
   if (updateSessionError) {
     return NextResponse.json({ error: "Could not update session." }, { status: 500 });
   }
+
+  await logActivity(supabase, booking_id, "completed");
 
   return NextResponse.json({ success: true, expires_at: expiresAt.toISOString() });
 }

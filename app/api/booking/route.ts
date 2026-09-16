@@ -2,6 +2,7 @@ import { NextRequest, NextResponse } from "next/server";
 import { supabaseServer } from "@/lib/supabase/server";
 import { isGmailAddress } from "@/lib/utils";
 import { sendBookingReceivedEmail, sendAdminBookingAlertEmail } from "@/lib/resend/emails";
+import { logActivity } from "@/lib/log-activity";
 import type { Booking } from "@/lib/types";
 
 export async function GET() {
@@ -124,6 +125,8 @@ export async function POST(request: NextRequest) {
   } catch (emailError) {
     console.error("Failed to send booking emails:", emailError);
   }
+
+  await logActivity(supabase, booking.id, "submitted");
 
   return NextResponse.json({ success: true });
 }

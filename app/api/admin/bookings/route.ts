@@ -10,7 +10,7 @@ export async function GET() {
 
   const { data: bookings, error } = await supabase
     .from("bookings")
-    .select("*")
+    .select("*, sessions(meet_link, token)")
     .order("created_at", { ascending: false });
 
   if (error) {

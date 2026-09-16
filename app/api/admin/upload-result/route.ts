@@ -2,6 +2,7 @@ import { NextRequest, NextResponse } from "next/server";
 import { supabaseServer } from "@/lib/supabase/server";
 import { requireAdmin } from "@/lib/require-admin";
 import { sendResultReadyEmail } from "@/lib/resend/emails";
+import { logActivity } from "@/lib/log-activity";
 import type { Booking } from "@/lib/types";
 
 const MAX_FILE_SIZE_BYTES = 10 * 1024 * 1024;
@@ -93,6 +94,13 @@ export async function POST(request: NextRequest) {
   } catch (emailError) {
     console.error("Failed to send result-ready email:", emailError);
   }
+
+  await logActivity(
+    supabase,
+    bookingId,
+    "result_uploaded",
+    session.result_file_path ? `Replaced: ${file.name}` : file.name
+  );
 
   return NextResponse.json({ success: true, file_name: file.name });
 }

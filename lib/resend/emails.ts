@@ -49,7 +49,7 @@ export async function sendAdminBookingAlertEmail(booking: Booking) {
   });
 }
 
-export async function sendBookingConfirmedEmail(
+export async function sendBookingConfirmedEmailOnly(
   booking: Booking,
   meetLink: string,
   sessionToken: string
@@ -67,6 +67,15 @@ export async function sendBookingConfirmedEmail(
       sessionUrl,
     }),
   });
+}
+
+export async function sendBookingConfirmedEmail(
+  booking: Booking,
+  meetLink: string,
+  sessionToken: string
+) {
+  await sendBookingConfirmedEmailOnly(booking, meetLink, sessionToken);
+  const sessionUrl = `${APP_URL}/session/${sessionToken}`;
 
   const slotTime = new Date(booking.slot_datetime).getTime();
   const in24h = slotTime - 24 * 60 * 60 * 1000;
