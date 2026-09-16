@@ -1,73 +1,71 @@
 "use client";
 
-import { use, useEffect, useState } from "react";
+import { use, useCallback, useEffect, useRef, useState } from "react";
+import { SimliClient } from "simli-client";
 import {
   AlertTriangle,
   Bot,
   Loader2,
   Mic,
   MicOff,
+  RefreshCw,
   Volume2,
 } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { cn } from "@/lib/utils";
+import { createBrowserAvatar, createSimliAvatar, type AvatarProvider } from "@/lib/ai-test/avatar";
+import { startRecording, stopRecording } from "@/lib/ai-test/recorder";
+import { detectSilence } from "@/lib/ai-test/silence";
+import type { CueCard, QuestionBankItem } from "@/lib/types";
 
 const AVATAR_NAME = process.env.NEXT_PUBLIC_AVATAR_NAME ?? "Rami";
 
-// --- Mock data for the UI-only build step. Replaced by real API/Simli/Groq
-// wiring in later steps of the AVATAR.md build order. ---
-const MOCK_PART1_QUESTIONS = [
-  "Do you live in a house or an apartment?",
-  "How long have you lived there?",
-  "What do you like most about your home?",
-  "Would you like to move somewhere else in the future?",
-  "Is your neighborhood a good place to live?",
-  "What kind of place would you like to live in when you are older?",
-];
-
-const MOCK_CUE_CARD = {
-  topic: "Describe a skill you would like to learn",
-  bulletPoints: [
-    "what the skill is",
-    "how you would learn it",
-    "how long it would take",
-    "and explain why you want to learn this skill",
-  ],
-  closingPrompt: "You should say...",
-};
-
-const MOCK_PART3_QUESTIONS = [
-  "What skills do you think will be important in the future job market?",
-  "Is it better to learn a skill through formal education or by practicing on your own?",
-  "Do you think schools teach enough practical skills?",
-  "How has technology changed the way people learn new skills?",
-];
-
 type RoomPhase =
+  | "loading"
   | "before_start"
   | "part1"
   | "part2_prep"
   | "part2_speaking"
   | "part3"
   | "generating"
-  | "done";
+  | "done"
+  | "error";
 
 type AvatarStatus = "idle" | "speaking" | "listening" | "processing";
-
 type BrowserCheck = "supported" | "unsupported" | "checking";
+type ConnectionState = "connecting" | "connected" | "failed";
 
 const PREP_SECONDS = 60;
 const SPEAKING_SECONDS = 120;
+
+interface SessionData {
+  studentName: string;
+  part1Questions: QuestionBankItem[];
+  part3Questions: QuestionBankItem[];
+  cueCard: CueCard | null;
+}
 
 export default function AiTestRoomPage({
   params,
 }: {
   params: Promise<{ token: string }>;
 }) {
-  useState(use(params)); // token reserved for the real API wiring step
+  const { token } = use(params);
 
-  const [phase, setPhase] = useState<RoomPhase>("before_start");
+  const videoRef = useRef<HTMLVideoElement>(null);
+  const audioRef = useRef<HTMLAudioElement>(null);
+  const avatarRef = useRef<AvatarProvider | null>(null);
+  const streamRef = useRef<MediaStream | null>(null);
+  const stopSilenceWatchRef = useRef<(() => void) | null>(null);
+
+  const [phase, setPhase] = useState<RoomPhase>("loading");
+  const [loadError, setLoadError] = useState<string | null>(null);
+  const [sessionData, setSessionData] = useState<SessionData | null>(null);
+
   const [avatarStatus, setAvatarStatus] = useState<AvatarStatus>("idle");
+  const [connectionState, setConnectionState] = useState<ConnectionState>("connecting");
+  const [usingFallbackAvatar, setUsingFallbackAvatar] = useState(false);
+
   const [browserCheck, setBrowserCheck] = useState<BrowserCheck>("checking");
   const [micError, setMicError] = useState<string | null>(null);
   const [micChecked, setMicChecked] = useState(false);
@@ -79,46 +77,159 @@ export default function AiTestRoomPage({
 
   const [prepSecondsLeft, setPrepSecondsLeft] = useState(PREP_SECONDS);
   const [speakingSecondsLeft, setSpeakingSecondsLeft] = useState(SPEAKING_SECONDS);
-
   const [generatingStep, setGeneratingStep] = useState(0);
+
+  // --- Load question set ---
+  useEffect(() => {
+    let cancelled = false;
+    async function load() {
+      try {
+        const res = await fetch(`/api/ai-test/session/${token}`);
+        const data = await res.json();
+        if (cancelled) return;
+        if (!res.ok) {
+          setLoadError(
+            data.error === "not_found"
+              ? "This test link is invalid or has expired."
+              : "Could not load your test. Please try again."
+          );
+          setPhase("error");
+          return;
+        }
+        setSessionData(data);
+        setPhase("before_start");
+      } catch {
+        if (!cancelled) {
+          setLoadError("Could not reach the server. Please check your connection.");
+          setPhase("error");
+        }
+      }
+    }
+    load();
+    return () => {
+      cancelled = true;
+    };
+  }, [token]);
 
   useEffect(() => {
     const isChromeOrEdge = /Chrome|Edg\//.test(navigator.userAgent);
     setBrowserCheck(isChromeOrEdge ? "supported" : "unsupported");
   }, []);
 
-  useEffect(() => {
-    if (phase !== "part2_prep") return;
-    if (prepSecondsLeft <= 0) {
-      setPhase("part2_speaking");
-      return;
+  // --- Connect to Simli once we know the mic works ---
+  const connectAvatar = useCallback(async () => {
+    setConnectionState("connecting");
+    try {
+      const res = await fetch("/api/ai-test/simli-session", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ token }),
+      });
+      const data = await res.json();
+      if (!res.ok) throw new Error(data.error ?? "Simli session failed");
+
+      if (!videoRef.current || !audioRef.current) throw new Error("Missing media elements");
+
+      const simliClient = new SimliClient(
+        data.session_token,
+        videoRef.current,
+        audioRef.current,
+        data.ice_servers ?? null
+      );
+      await simliClient.start();
+
+      avatarRef.current = createSimliAvatar({ simliClient, appSessionToken: token });
+      setUsingFallbackAvatar(false);
+      setConnectionState("connected");
+    } catch (err) {
+      console.error("Simli connection failed, falling back to browser TTS:", err);
+      avatarRef.current = createBrowserAvatar();
+      setUsingFallbackAvatar(true);
+      setConnectionState("connected");
     }
-    const timer = setTimeout(() => setPrepSecondsLeft((s) => s - 1), 1000);
-    return () => clearTimeout(timer);
-  }, [phase, prepSecondsLeft]);
+  }, [token]);
 
   useEffect(() => {
-    if (phase !== "part2_speaking") return;
-    if (speakingSecondsLeft <= 0) {
-      setPhase("part3");
-      setAvatarStatus("speaking");
-      return;
+    if (phase === "before_start" && micChecked) {
+      connectAvatar();
     }
-    const timer = setTimeout(() => setSpeakingSecondsLeft((s) => s - 1), 1000);
-    return () => clearTimeout(timer);
-  }, [phase, speakingSecondsLeft]);
+  }, [phase, micChecked, connectAvatar]);
 
   useEffect(() => {
-    if (phase !== "generating") return;
-    if (generatingStep >= 3) {
-      const timer = setTimeout(() => setPhase("done"), 1200);
-      return () => clearTimeout(timer);
-    }
-    const timer = setTimeout(() => setGeneratingStep((s) => s + 1), 1400);
-    return () => clearTimeout(timer);
-  }, [phase, generatingStep]);
+    return () => {
+      avatarRef.current?.destroy();
+      streamRef.current?.getTracks().forEach((t) => t.stop());
+      stopSilenceWatchRef.current?.();
+    };
+  }, []);
 
-  async function checkMic() {
+  async function speak(text: string) {
+    setAvatarStatus("speaking");
+    try {
+      await avatarRef.current?.speak(text);
+    } catch (err) {
+      console.error("Avatar speak failed:", err);
+    }
+    setAvatarStatus("listening");
+  }
+
+  async function saveTurn(
+    speaker: "examiner" | "student",
+    text: string,
+    part: 1 | 2 | 3,
+    questionId: string | null,
+    newPhase?: string
+  ) {
+    try {
+      await fetch("/api/ai-test/save-turn", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ token, speaker, text, part, question_id: questionId, phase: newPhase }),
+      });
+    } catch (err) {
+      console.error("Failed to save turn:", err);
+    }
+  }
+
+  async function beginRecording(part: 1 | 2 | 3, questionId: string | null, autoStopMs?: number) {
+    try {
+      const stream = await startRecording(streamRef.current ?? undefined);
+      streamRef.current = stream;
+      setIsRecording(true);
+      setAvatarStatus("listening");
+
+      if (!autoStopMs) {
+        stopSilenceWatchRef.current = detectSilence(stream, () => {
+          finishRecording(part, questionId);
+        });
+      }
+    } catch {
+      setMicError("Lost access to your microphone. Please check your browser permissions.");
+    }
+  }
+
+  async function finishRecording(part: 1 | 2 | 3, questionId: string | null) {
+    stopSilenceWatchRef.current?.();
+    stopSilenceWatchRef.current = null;
+    if (!isRecording) return;
+    setIsRecording(false);
+    setAvatarStatus("processing");
+
+    const blob = await stopRecording(false);
+    try {
+      const formData = new FormData();
+      formData.append("audio", blob, "answer.webm");
+      formData.append("token", token);
+      const res = await fetch("/api/ai-test/transcribe", { method: "POST", body: formData });
+      const data = await res.json();
+      const text = res.ok ? data.text : "(Could not transcribe this answer.)";
+      await saveTurn("student", text, part, questionId);
+    } catch (err) {
+      console.error("Transcription failed:", err);
+    }
+  }
+
+  async function handleCheckMic() {
     setIsCheckingMic(true);
     setMicError(null);
     try {
@@ -134,41 +245,119 @@ export default function AiTestRoomPage({
     }
   }
 
-  function handleBeginTest() {
+  async function handleBeginTest() {
+    if (!sessionData) return;
     setPhase("part1");
-    setAvatarStatus("speaking");
-    setTimeout(() => setAvatarStatus("listening"), 1500);
+    const question = sessionData.part1Questions[0];
+    await saveTurn("examiner", question.question_text, 1, question.id, "part1");
+    await speak(question.question_text);
+    beginRecording(1, question.id);
   }
 
-  function handleDoneSpeakingPart1() {
-    if (part1Index < MOCK_PART1_QUESTIONS.length - 1) {
-      setAvatarStatus("speaking");
-      setPart1Index((i) => i + 1);
-      setTimeout(() => setAvatarStatus("listening"), 1200);
+  async function advancePart1() {
+    if (!sessionData) return;
+    await finishRecording(1, sessionData.part1Questions[part1Index].id);
+
+    if (part1Index < sessionData.part1Questions.length - 1) {
+      const nextIndex = part1Index + 1;
+      setPart1Index(nextIndex);
+      const question = sessionData.part1Questions[nextIndex];
+      await saveTurn("examiner", question.question_text, 1, question.id);
+      await speak(question.question_text);
+      beginRecording(1, question.id);
     } else {
-      setAvatarStatus("speaking");
       setPhase("part2_prep");
       setPrepSecondsLeft(PREP_SECONDS);
+      if (sessionData.cueCard) {
+        await saveTurn(
+          "examiner",
+          `${sessionData.cueCard.topic}. ${sessionData.cueCard.bullet_points.join(", ")}.`,
+          2,
+          sessionData.cueCard.id,
+          "part2_prep"
+        );
+        await speak(`${sessionData.cueCard.topic}. You have one minute to prepare.`);
+      }
     }
   }
 
-  function handleStartSpeakingPart2() {
+  useEffect(() => {
+    if (phase !== "part2_prep") return;
+    if (prepSecondsLeft <= 0) return;
+    const timer = setTimeout(() => setPrepSecondsLeft((s) => s - 1), 1000);
+    return () => clearTimeout(timer);
+  }, [phase, prepSecondsLeft]);
+
+  async function startSpeakingPart2() {
+    if (!sessionData?.cueCard) return;
     setPhase("part2_speaking");
     setSpeakingSecondsLeft(SPEAKING_SECONDS);
-    setAvatarStatus("listening");
+    beginRecording(2, sessionData.cueCard.id, SPEAKING_SECONDS * 1000);
   }
 
-  function handleDoneSpeakingPart3() {
-    if (part3Index < MOCK_PART3_QUESTIONS.length - 1) {
-      setAvatarStatus("speaking");
-      setPart3Index((i) => i + 1);
-      setTimeout(() => setAvatarStatus("listening"), 1200);
+  useEffect(() => {
+    if (phase !== "part2_speaking") return;
+    if (speakingSecondsLeft <= 0) {
+      (async () => {
+        if (!sessionData) return;
+        await finishRecording(2, sessionData.cueCard?.id ?? null);
+        setPhase("part3");
+        const question = sessionData.part3Questions[0];
+        await saveTurn("examiner", question.question_text, 3, question.id, "part3");
+        await speak(question.question_text);
+        beginRecording(3, question.id);
+      })();
+      return;
+    }
+    const timer = setTimeout(() => setSpeakingSecondsLeft((s) => s - 1), 1000);
+    return () => clearTimeout(timer);
+  }, [phase, speakingSecondsLeft]); // eslint-disable-line react-hooks/exhaustive-deps
+
+  async function advancePart3() {
+    if (!sessionData) return;
+    await finishRecording(3, sessionData.part3Questions[part3Index].id);
+
+    if (part3Index < sessionData.part3Questions.length - 1) {
+      const nextIndex = part3Index + 1;
+      setPart3Index(nextIndex);
+      const question = sessionData.part3Questions[nextIndex];
+      await saveTurn("examiner", question.question_text, 3, question.id);
+      await speak(question.question_text);
+      beginRecording(3, question.id);
     } else {
+      avatarRef.current?.stop();
       setAvatarStatus("processing");
       setPhase("generating");
       setGeneratingStep(0);
+      runScoring();
     }
   }
+
+  async function runScoring() {
+    try {
+      const res = await fetch("/api/ai-test/score", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ token }),
+      });
+      if (!res.ok) throw new Error("Scoring failed");
+      setPhase("done");
+      window.location.href = `/ai-test/result/${token}`;
+    } catch (err) {
+      console.error("Scoring failed:", err);
+      setLoadError(
+        "We had trouble generating your results. Please contact support with your test link."
+      );
+      setPhase("error");
+    }
+  }
+
+  useEffect(() => {
+    if (phase !== "generating") return;
+    if (generatingStep >= 2) return;
+    const timer = setTimeout(() => setGeneratingStep((s) => s + 1), 2000);
+    return () => clearTimeout(timer);
+  }, [phase, generatingStep]);
 
   const statusLabel: Record<AvatarStatus, string> = {
     idle: "Ready",
@@ -180,9 +369,29 @@ export default function AiTestRoomPage({
   return (
     <div className="flex min-h-screen flex-col bg-slate-950 lg:flex-row">
       <div className="relative flex h-[45vh] flex-col items-center justify-center bg-slate-900 lg:h-screen lg:w-[55%]">
-        <div className="flex h-40 w-40 items-center justify-center rounded-full bg-slate-800 sm:h-56 sm:w-56">
-          <Bot className="h-20 w-20 text-slate-500 sm:h-28 sm:w-28" />
-        </div>
+        {!usingFallbackAvatar ? (
+          <video
+            ref={videoRef}
+            autoPlay
+            playsInline
+            className={cn(
+              "h-40 w-40 rounded-full object-cover sm:h-56 sm:w-56",
+              connectionState !== "connected" && "hidden"
+            )}
+          />
+        ) : null}
+        <audio ref={audioRef} autoPlay className="hidden" />
+
+        {(usingFallbackAvatar || connectionState !== "connected") && (
+          <div className="flex h-40 w-40 items-center justify-center rounded-full bg-slate-800 sm:h-56 sm:w-56">
+            {connectionState === "connecting" ? (
+              <Loader2 className="h-10 w-10 animate-spin text-slate-500" />
+            ) : (
+              <Bot className="h-20 w-20 text-slate-500 sm:h-28 sm:w-28" />
+            )}
+          </div>
+        )}
+
         <p className="mt-4 text-sm font-medium text-slate-400">{AVATAR_NAME}</p>
         <div className="mt-3 flex items-center gap-2 rounded-full border border-slate-700 bg-slate-800 px-3.5 py-1.5 text-xs font-medium text-slate-300">
           {avatarStatus === "speaking" && <Volume2 className="h-3.5 w-3.5 text-accent" />}
@@ -196,10 +405,7 @@ export default function AiTestRoomPage({
               <span
                 key={i}
                 className="w-1.5 animate-pulse rounded-full bg-success"
-                style={{
-                  height: `${8 + ((i * 7) % 20)}px`,
-                  animationDelay: `${i * 120}ms`,
-                }}
+                style={{ height: `${8 + ((i * 7) % 20)}px`, animationDelay: `${i * 120}ms` }}
               />
             ))}
           </div>
@@ -207,10 +413,27 @@ export default function AiTestRoomPage({
       </div>
 
       <div className="flex flex-1 flex-col bg-white px-4 py-8 sm:px-8 lg:w-[45%] lg:overflow-y-auto">
-        {phase === "before_start" && (
+        {phase === "loading" && (
+          <div className="flex flex-1 items-center justify-center">
+            <Loader2 className="h-6 w-6 animate-spin text-primary" />
+          </div>
+        )}
+
+        {phase === "error" && (
+          <div className="mx-auto flex max-w-md flex-1 flex-col items-center justify-center text-center">
+            <AlertTriangle className="h-8 w-8 text-error" />
+            <p className="mt-4 text-text-secondary">{loadError}</p>
+            <Button variant="outline" className="mt-6" onClick={() => window.location.reload()}>
+              <RefreshCw className="h-4 w-4" />
+              Try Again
+            </Button>
+          </div>
+        )}
+
+        {phase === "before_start" && sessionData && (
           <div className="mx-auto flex max-w-md flex-1 flex-col justify-center">
             <h1 className="text-2xl font-bold text-text-primary">
-              Welcome to your AI Mock Test
+              Welcome, {sessionData.studentName}
             </h1>
             <p className="mt-2 text-text-secondary">
               You&apos;re about to take a ~15 minute IELTS speaking test with{" "}
@@ -232,11 +455,22 @@ export default function AiTestRoomPage({
               <p className="mt-1 text-sm text-text-secondary">
                 We need to confirm your microphone is working before you begin.
               </p>
-              {micError && <p className="mt-3 text-sm text-error">{micError}</p>}
+              {micError && (
+                <p className="mt-3 text-sm text-error">
+                  {micError} You can also check your{" "}
+                  <a
+                    href="chrome://settings/content/microphone"
+                    className="underline"
+                  >
+                    browser microphone settings
+                  </a>
+                  .
+                </p>
+              )}
               <Button
                 variant={micChecked ? "secondary" : "primary"}
                 className="mt-4 w-full"
-                onClick={checkMic}
+                onClick={handleCheckMic}
                 disabled={isCheckingMic}
               >
                 {isCheckingMic ? (
@@ -254,56 +488,59 @@ export default function AiTestRoomPage({
               size="lg"
               variant="accent"
               className="mt-6 w-full"
-              disabled={!micChecked}
+              disabled={!micChecked || connectionState !== "connected"}
               onClick={handleBeginTest}
             >
+              {micChecked && connectionState === "connecting" ? (
+                <Loader2 className="h-4 w-4 animate-spin" />
+              ) : null}
               Begin Test
             </Button>
             <p className="mt-3 text-center text-xs text-text-muted">~15 minutes</p>
           </div>
         )}
 
-        {phase === "part1" && (
+        {phase === "part1" && sessionData && (
           <div className="mx-auto flex w-full max-w-md flex-1 flex-col justify-center">
             <span className="w-fit rounded-full bg-primary-light px-3 py-1 text-xs font-semibold uppercase tracking-wide text-primary">
               Part 1 — Introduction
             </span>
             <p className="mt-3 text-xs font-medium uppercase tracking-wide text-text-muted">
-              Question {part1Index + 1} of {MOCK_PART1_QUESTIONS.length}
+              Question {part1Index + 1} of {sessionData.part1Questions.length}
             </p>
             <p className="mt-2 text-xl font-semibold text-text-primary">
-              {MOCK_PART1_QUESTIONS[part1Index]}
+              {sessionData.part1Questions[part1Index].question_text}
             </p>
 
-            <RecordingToggle isRecording={isRecording} onToggle={setIsRecording} />
+            <RecordingIndicator isRecording={isRecording} />
 
             <Button
               variant="ghost"
               size="sm"
               className="mt-6 self-center text-text-muted"
-              onClick={handleDoneSpeakingPart1}
+              onClick={advancePart1}
             >
               I&apos;m done speaking
             </Button>
           </div>
         )}
 
-        {phase === "part2_prep" && (
+        {phase === "part2_prep" && sessionData?.cueCard && (
           <div className="mx-auto flex w-full max-w-md flex-1 flex-col justify-center">
             <span className="w-fit rounded-full bg-primary-light px-3 py-1 text-xs font-semibold uppercase tracking-wide text-primary">
               Part 2 — Long Turn
             </span>
             <div className="mt-4 rounded-xl border border-border bg-gray-50 p-5">
               <h3 className="text-lg font-semibold text-text-primary">
-                {MOCK_CUE_CARD.topic}
+                {sessionData.cueCard.topic}
               </h3>
               <ul className="mt-3 list-disc space-y-1.5 pl-5 text-sm text-text-secondary">
-                {MOCK_CUE_CARD.bulletPoints.map((point) => (
+                {sessionData.cueCard.bullet_points.map((point) => (
                   <li key={point}>{point}</li>
                 ))}
               </ul>
               <p className="mt-3 text-sm font-medium text-text-muted">
-                {MOCK_CUE_CARD.closingPrompt}
+                {sessionData.cueCard.closing_prompt}
               </p>
             </div>
 
@@ -322,20 +559,20 @@ export default function AiTestRoomPage({
             </div>
 
             {prepSecondsLeft <= 0 && (
-              <Button size="lg" variant="accent" className="mt-6 w-full" onClick={handleStartSpeakingPart2}>
+              <Button size="lg" variant="accent" className="mt-6 w-full" onClick={startSpeakingPart2}>
                 Start Speaking
               </Button>
             )}
           </div>
         )}
 
-        {phase === "part2_speaking" && (
+        {phase === "part2_speaking" && sessionData?.cueCard && (
           <div className="mx-auto flex w-full max-w-md flex-1 flex-col justify-center">
             <span className="w-fit rounded-full bg-primary-light px-3 py-1 text-xs font-semibold uppercase tracking-wide text-primary">
               Part 2 — Long Turn
             </span>
             <h3 className="mt-3 text-lg font-semibold text-text-primary">
-              {MOCK_CUE_CARD.topic}
+              {sessionData.cueCard.topic}
             </h3>
 
             <div className="mt-6 h-2 w-full overflow-hidden rounded-full bg-gray-200">
@@ -351,36 +588,36 @@ export default function AiTestRoomPage({
               {(speakingSecondsLeft % 60).toString().padStart(2, "0")} remaining
             </p>
 
-            <RecordingToggle isRecording={isRecording} onToggle={setIsRecording} />
+            <RecordingIndicator isRecording={isRecording} />
           </div>
         )}
 
-        {phase === "part3" && (
+        {phase === "part3" && sessionData && (
           <div className="mx-auto flex w-full max-w-md flex-1 flex-col justify-center">
             <span className="w-fit rounded-full bg-primary-light px-3 py-1 text-xs font-semibold uppercase tracking-wide text-primary">
               Part 3 — Discussion
             </span>
             <p className="mt-3 text-xs font-medium uppercase tracking-wide text-text-muted">
-              Question {part3Index + 1} of {MOCK_PART3_QUESTIONS.length}
+              Question {part3Index + 1} of {sessionData.part3Questions.length}
             </p>
             <p className="mt-2 text-xl font-semibold text-text-primary">
-              {MOCK_PART3_QUESTIONS[part3Index]}
+              {sessionData.part3Questions[part3Index].question_text}
             </p>
 
-            <RecordingToggle isRecording={isRecording} onToggle={setIsRecording} />
+            <RecordingIndicator isRecording={isRecording} />
 
             <Button
               variant="ghost"
               size="sm"
               className="mt-6 self-center text-text-muted"
-              onClick={handleDoneSpeakingPart3}
+              onClick={advancePart3}
             >
               I&apos;m done speaking
             </Button>
           </div>
         )}
 
-        {phase === "generating" && (
+        {(phase === "generating" || phase === "done") && (
           <div className="mx-auto flex w-full max-w-md flex-1 flex-col items-center justify-center text-center">
             <Loader2 className="h-10 w-10 animate-spin text-primary" />
             <h2 className="mt-5 text-xl font-semibold text-text-primary">
@@ -407,35 +644,17 @@ export default function AiTestRoomPage({
             </div>
           </div>
         )}
-
-        {phase === "done" && (
-          <div className="mx-auto flex w-full max-w-md flex-1 flex-col items-center justify-center text-center">
-            <h2 className="text-xl font-semibold text-text-primary">Your results are ready</h2>
-            <p className="mt-2 text-sm text-text-secondary">
-              (Redirects automatically to your result page once scoring is wired up.)
-            </p>
-          </div>
-        )}
       </div>
     </div>
   );
 }
 
-function RecordingToggle({
-  isRecording,
-  onToggle,
-}: {
-  isRecording: boolean;
-  onToggle: (v: boolean) => void;
-}) {
+function RecordingIndicator({ isRecording }: { isRecording: boolean }) {
   return (
-    <button
-      onClick={() => onToggle(!isRecording)}
+    <div
       className={cn(
-        "mt-6 flex items-center justify-center gap-2 rounded-xl border-2 border-dashed px-5 py-6 text-sm font-medium transition-colors",
-        isRecording
-          ? "border-error bg-red-50 text-error"
-          : "border-border bg-gray-50 text-text-secondary hover:border-primary hover:text-primary"
+        "mt-6 flex items-center justify-center gap-2 rounded-xl border-2 border-dashed px-5 py-6 text-sm font-medium",
+        isRecording ? "border-error bg-red-50 text-error" : "border-border bg-gray-50 text-text-secondary"
       )}
     >
       {isRecording ? (
@@ -444,14 +663,14 @@ function RecordingToggle({
             <span className="absolute inline-flex h-full w-full animate-ping rounded-full bg-error opacity-75" />
             <span className="relative inline-flex h-2.5 w-2.5 rounded-full bg-error" />
           </span>
-          Recording...
+          Recording your answer...
         </>
       ) : (
         <>
           <Mic className="h-4 w-4" />
-          Tap to speak
+          Preparing microphone...
         </>
       )}
-    </button>
+    </div>
   );
 }
