@@ -1,5 +1,5 @@
 import { Resend } from "resend";
-import type { Booking } from "@/lib/types";
+import type { AiTestBooking, Booking } from "@/lib/types";
 import { formatSlotDateTime } from "@/lib/utils";
 import BookingReceivedEmail from "@/emails/booking-received";
 import NewBookingAlertEmail from "@/emails/new-booking-alert";
@@ -9,6 +9,11 @@ import Reminder24hEmail from "@/emails/reminder-24h";
 import Reminder1hEmail from "@/emails/reminder-1h";
 import ResultReadyEmail from "@/emails/result-ready";
 import ResendLinkEmail from "@/emails/resend-link";
+import AiTestReceivedEmail from "@/emails/ai-test-received";
+import NewAiTestAlertEmail from "@/emails/new-ai-test-alert";
+import AiTestApprovedEmail from "@/emails/ai-test-approved";
+import AiTestRejectedEmail from "@/emails/ai-test-rejected";
+import AiTestResultReadyEmail from "@/emails/ai-test-result-ready";
 
 export const resend = new Resend(process.env.RESEND_API_KEY);
 
@@ -145,6 +150,74 @@ export async function sendResendLinkEmail(studentEmail: string, sessionToken: st
     subject: "Your SpeakMock session link",
     react: ResendLinkEmail({
       sessionUrl: `${APP_URL}/session/${sessionToken}`,
+    }),
+  });
+}
+
+// --- AI Avatar Test emails ---
+
+export async function sendAiTestReceivedEmail(booking: AiTestBooking) {
+  await resend.emails.send({
+    from: FROM_EMAIL,
+    to: booking.student_email,
+    subject: "Payment received, verifying — SpeakMock AI Mock Test",
+    react: AiTestReceivedEmail({
+      studentName: booking.student_name,
+      transactionId: booking.transaction_id,
+      adminEmail: ADMIN_EMAIL,
+    }),
+  });
+}
+
+export async function sendNewAiTestAlertEmail(booking: AiTestBooking) {
+  await resend.emails.send({
+    from: FROM_EMAIL,
+    to: ADMIN_EMAIL,
+    subject: `[Action Required] New AI Test Booking — ${booking.student_name}`,
+    react: NewAiTestAlertEmail({
+      studentName: booking.student_name,
+      studentEmail: booking.student_email,
+      transactionId: booking.transaction_id,
+      reviewUrl: `${APP_URL}/admin/ai-test/${booking.id}`,
+    }),
+  });
+}
+
+export async function sendAiTestApprovedEmail(booking: AiTestBooking, token: string) {
+  const avatarName = process.env.NEXT_PUBLIC_AVATAR_NAME ?? "Rami";
+  await resend.emails.send({
+    from: FROM_EMAIL,
+    to: booking.student_email,
+    subject: "Your AI Mock Test is ready — SpeakMock",
+    react: AiTestApprovedEmail({
+      studentName: booking.student_name,
+      roomUrl: `${APP_URL}/ai-test/room/${token}`,
+      avatarName,
+    }),
+  });
+}
+
+export async function sendAiTestRejectedEmail(booking: AiTestBooking, reason: string) {
+  await resend.emails.send({
+    from: FROM_EMAIL,
+    to: booking.student_email,
+    subject: "Update on your SpeakMock AI Mock Test booking",
+    react: AiTestRejectedEmail({
+      studentName: booking.student_name,
+      reason,
+      retryUrl: `${APP_URL}/ai-test/pay`,
+    }),
+  });
+}
+
+export async function sendAiTestResultReadyEmail(booking: AiTestBooking, token: string) {
+  await resend.emails.send({
+    from: FROM_EMAIL,
+    to: booking.student_email,
+    subject: "Your IELTS AI Mock Test result is ready — SpeakMock",
+    react: AiTestResultReadyEmail({
+      studentName: booking.student_name,
+      resultUrl: `${APP_URL}/ai-test/result/${token}`,
     }),
   });
 }
