@@ -47,6 +47,46 @@ export default function AdminAiTestDetailPage({
   const [isRejecting, setIsRejecting] = useState(false);
   const [actionError, setActionError] = useState<string | null>(null);
   const [copied, setCopied] = useState(false);
+  const [copiedRoom, setCopiedRoom] = useState(false);
+  const [isScoring, setIsScoring] = useState(false);
+  const [scoreError, setScoreError] = useState<string | null>(null);
+
+  const roomUrl =
+    session && typeof window !== "undefined"
+      ? `${window.location.origin}/ai-test/room/${session.token}`
+      : "";
+
+  function copyRoomUrl() {
+    if (!roomUrl) return;
+    navigator.clipboard.writeText(roomUrl);
+    setCopiedRoom(true);
+    setTimeout(() => setCopiedRoom(false), 1500);
+  }
+
+  async function handleScoreNow() {
+    if (!session) return;
+    setIsScoring(true);
+    setScoreError(null);
+    try {
+      const res = await fetch("/api/ai-test/score", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ token: session.token }),
+      });
+      const data = await res.json().catch(() => ({}));
+      if (!res.ok) {
+        throw new Error(
+          data.error ??
+            "Scoring failed. Free-tier models are sometimes rate-limited — try again shortly."
+        );
+      }
+      await load();
+    } catch (err) {
+      setScoreError(err instanceof Error ? err.message : "Could not score this test.");
+    } finally {
+      setIsScoring(false);
+    }
+  }
 
   const load = useCallback(async () => {
     setIsLoading(true);
@@ -265,16 +305,46 @@ export default function AdminAiTestDetailPage({
               </div>
             )}
 
-            {booking.status === "approved" && session && (
-              <p className="text-sm text-text-secondary">
-                Test link sent. Waiting for the student to start their session.
-              </p>
-            )}
+            {(booking.status === "approved" || booking.status === "in_progress") && session && (
+              <div className="space-y-4">
+                <p className="text-sm text-text-secondary">
+                  {booking.status === "approved"
+                    ? "Test link sent. Waiting for the student to start their session."
+                    : "The student is currently taking the test."}
+                </p>
 
-            {booking.status === "in_progress" && (
-              <p className="text-sm text-text-secondary">
-                The student is currently taking the test.
-              </p>
+                <div>
+                  <p className="text-xs font-medium uppercase tracking-wide text-text-muted">
+                    Test Room Link
+                  </p>
+                  <div className="mt-1 flex items-center gap-2">
+                    <code className="flex-1 truncate rounded-lg border border-border bg-gray-50 px-3 py-2 font-mono text-xs text-text-secondary">
+                      {roomUrl}
+                    </code>
+                    <Button variant="outline" size="icon" onClick={copyRoomUrl}>
+                      <Copy className="h-4 w-4" />
+                    </Button>
+                  </div>
+                  {copiedRoom && <p className="mt-1 text-xs text-success">Copied!</p>}
+                </div>
+
+                {session.transcript.length > 0 && (
+                  <div className="rounded-lg border border-amber-200 bg-amber-50 p-4">
+                    <p className="text-sm text-amber-800">
+                      This test has {session.transcript.length} recorded turns but was never
+                      scored. If the student finished and scoring failed, you can run it now.
+                    </p>
+                    <Button
+                      className="mt-3 w-full"
+                      disabled={isScoring}
+                      onClick={handleScoreNow}
+                    >
+                      {isScoring && <Loader2 className="h-4 w-4 animate-spin" />}
+                      Score This Test Now
+                    </Button>
+                  </div>
+                )}
+              </div>
             )}
 
             {booking.status === "rejected" && (
@@ -283,10 +353,24 @@ export default function AdminAiTestDetailPage({
               </p>
             )}
 
-            {booking.status === "completed" && result && (
-              <p className="text-sm text-text-secondary">
-                Test completed and scored. See the result panel for details.
-              </p>
+            {booking.status === "completed" && session && (
+              <div className="space-y-4">
+                <p className="text-sm text-text-secondary">
+                  {result
+                    ? "Test completed and scored. See the result panel for details."
+                    : "The test finished but no score was saved. Re-run scoring below."}
+                </p>
+                <Button
+                  variant="outline"
+                  className="w-full"
+                  disabled={isScoring}
+                  onClick={handleScoreNow}
+                >
+                  {isScoring && <Loader2 className="h-4 w-4 animate-spin" />}
+                  {result ? "Re-score This Test" : "Score This Test Now"}
+                </Button>
+                {scoreError && <p className="text-sm text-error">{scoreError}</p>}
+              </div>
             )}
           </AdminCard>
         </div>

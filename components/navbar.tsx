@@ -28,15 +28,34 @@ export function Navbar({ transparent = false, onBookClick }: NavbarProps) {
             Mock
           </span>
         </Link>
-        {onBookClick ? (
-          <Button size="sm" variant={transparent ? "accent" : "primary"} onClick={onBookClick}>
-            Book a Session
-          </Button>
-        ) : (
-          <Button asChild size="sm" variant={transparent ? "accent" : "primary"}>
-            <Link href="/book">Book a Session</Link>
-          </Button>
-        )}
+
+        <div className="flex items-center gap-2 sm:gap-3">
+          <Link
+            href="/ai-test"
+            className={cn(
+              "text-sm font-medium transition-colors",
+              transparent
+                ? "text-white drop-shadow-md hover:text-dune-300"
+                : "text-text-secondary hover:text-text-primary"
+            )}
+          >
+            AI Mock Test
+          </Link>
+
+          {onBookClick ? (
+            <Button
+              size="sm"
+              variant={transparent ? "accent" : "primary"}
+              onClick={onBookClick}
+            >
+              Book a Session
+            </Button>
+          ) : (
+            <Button asChild size="sm" variant={transparent ? "accent" : "primary"}>
+              <Link href="/book">Book a Session</Link>
+            </Button>
+          )}
+        </div>
       </div>
     </header>
   );

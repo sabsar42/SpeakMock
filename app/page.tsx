@@ -2,12 +2,14 @@
 
 import { useState } from "react";
 import Image from "next/image";
+import Link from "next/link";
 import {
   ArrowRight,
   Calendar,
   CheckCircle,
   Download,
   Mic,
+  Sparkles,
   Video,
 } from "lucide-react";
 import { Navbar } from "@/components/navbar";
@@ -24,6 +26,8 @@ import {
 
 const PAYMENT_METHOD_NAME =
   process.env.NEXT_PUBLIC_PAYMENT_METHOD_NAME ?? "bKash";
+const AI_TEST_FEE = process.env.NEXT_PUBLIC_AI_TEST_FEE ?? "৳120";
+const SESSION_FEE = process.env.NEXT_PUBLIC_SESSION_FEE ?? "৳500";
 
 const steps = [
   {
@@ -120,30 +124,98 @@ export default function HomePage() {
               <span className="text-dune-300">Simplified</span>
             </h1>
             <p className="mx-auto mt-5 max-w-xl text-lg text-white [text-shadow:0_1px_4px_rgba(0,0,0,0.35)]">
-              Book a live mock speaking test over Google Meet and get real
-              examiner feedback with your band score — no guesswork.
+              Practise with an AI examiner and get your band score in minutes, or
+              book a live session with a real examiner.
             </p>
-            <div className="mt-8 flex flex-col items-center justify-center gap-3 sm:flex-row">
-              <Button
-                size="lg"
-                variant="accent"
-                onClick={() => setBookingOpen(true)}
-              >
-                Book Now
-                <ArrowRight className="h-4 w-4" />
-              </Button>
-              <Button
-                size="lg"
-                className="bg-white/80 text-primary hover:bg-white"
+
+            <div className="mx-auto mt-10 grid max-w-3xl gap-4 text-left sm:grid-cols-2">
+              <div className="relative overflow-hidden rounded-2xl border border-white/90 bg-white/90 p-6 shadow-[0_8px_30px_rgba(15,23,42,0.3)]">
+                <span className="inline-flex items-center gap-1.5 rounded-full border border-accent/30 bg-accent-light px-2.5 py-1 text-[11px] font-semibold uppercase tracking-wide text-accent">
+                  <Sparkles className="h-3 w-3" />
+                  Instant
+                </span>
+                <h2 className="mt-3 text-xl font-bold text-text-primary">AI Mock Test</h2>
+                <ul className="mt-3 space-y-1.5 text-sm text-text-secondary">
+                  <li>Results in minutes, not days</li>
+                  <li>AI examiner, available any time</li>
+                  <li>Full band breakdown and PDF report</li>
+                </ul>
+                <p className="mt-4 text-2xl font-bold text-accent">{AI_TEST_FEE}</p>
+                <Button asChild size="lg" variant="accent" className="mt-4 w-full">
+                  <Link href="/ai-test">
+                    Start Now
+                    <ArrowRight className="h-4 w-4" />
+                  </Link>
+                </Button>
+              </div>
+
+              <div className="relative overflow-hidden rounded-2xl border border-white/90 bg-white/90 p-6 shadow-[0_8px_30px_rgba(15,23,42,0.3)]">
+                <span className="inline-flex items-center gap-1.5 rounded-full border border-primary/20 bg-primary-light px-2.5 py-1 text-[11px] font-semibold uppercase tracking-wide text-primary">
+                  <Video className="h-3 w-3" />
+                  Live
+                </span>
+                <h2 className="mt-3 text-xl font-bold text-text-primary">Human Session</h2>
+                <ul className="mt-3 space-y-1.5 text-sm text-text-secondary">
+                  <li>Real certified examiner</li>
+                  <li>Live over Google Meet</li>
+                  <li>Personal feedback on your answers</li>
+                </ul>
+                <p className="mt-4 text-2xl font-bold text-primary">{SESSION_FEE}</p>
+                <Button
+                  size="lg"
+                  variant="secondary"
+                  className="mt-4 w-full"
+                  onClick={() => setBookingOpen(true)}
+                >
+                  Book a Slot
+                </Button>
+              </div>
+            </div>
+
+            <div className="mt-6">
+              <button
                 onClick={() => setResendOpen(true)}
+                className="text-sm font-medium text-white underline-offset-4 [text-shadow:0_1px_3px_rgba(0,0,0,0.4)] hover:underline"
               >
                 Already booked? Get your link
-              </Button>
+              </button>
             </div>
-            <p className="mt-5 text-xs font-semibold uppercase tracking-wide text-white [text-shadow:0_1px_3px_rgba(0,0,0,0.4)]">
-              Certified examiners &middot; Real IELTS format &middot; Fast
-              confirmation
-            </p>
+          </div>
+        </section>
+
+        <section className="px-4 pb-10 sm:px-6">
+          <div className="mx-auto max-w-3xl overflow-hidden rounded-2xl border border-white/90 bg-white/90 shadow-[0_8px_30px_rgba(15,23,42,0.3)]">
+            <table className="w-full text-left text-sm">
+              <thead>
+                <tr className="border-b border-border bg-gray-50">
+                  <th className="px-4 py-3 font-semibold text-text-primary"> </th>
+                  <th className="px-4 py-3 font-semibold text-text-primary">AI Mock Test</th>
+                  <th className="px-4 py-3 font-semibold text-text-primary">Human Session</th>
+                </tr>
+              </thead>
+              <tbody className="text-text-secondary">
+                <tr className="border-b border-border">
+                  <td className="px-4 py-3 font-medium text-text-primary">Examiner</td>
+                  <td className="px-4 py-3">AI avatar</td>
+                  <td className="px-4 py-3">Real human examiner</td>
+                </tr>
+                <tr className="border-b border-border">
+                  <td className="px-4 py-3 font-medium text-text-primary">Scheduling</td>
+                  <td className="px-4 py-3">Instant, no slot needed</td>
+                  <td className="px-4 py-3">Requires slot booking</td>
+                </tr>
+                <tr className="border-b border-border">
+                  <td className="px-4 py-3 font-medium text-text-primary">Results</td>
+                  <td className="px-4 py-3">Instant, auto-generated</td>
+                  <td className="px-4 py-3">Within 72 hours</td>
+                </tr>
+                <tr>
+                  <td className="px-4 py-3 font-medium text-text-primary">Best for</td>
+                  <td className="px-4 py-3">Affordable regular practice</td>
+                  <td className="px-4 py-3">A serious pre-exam attempt</td>
+                </tr>
+              </tbody>
+            </table>
           </div>
         </section>
 

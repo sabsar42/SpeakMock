@@ -61,5 +61,50 @@ export async function GET(request: NextRequest) {
     deletedCount += 1;
   }
 
-  return NextResponse.json({ deleted: deletedCount, timestamp: now });
+  // AI Avatar Test sessions expire on the same 72-hour rule. Transcripts are
+  // cleared alongside the PDF, since they contain the student's own speech.
+  const { data: expiredAiSessions, error: aiFetchError } = await supabase
+    .from("ai_test_sessions")
+    .select("id, result_file_path")
+    .lt("expires_at", now)
+    .eq("is_deleted", false);
+
+  if (aiFetchError) {
+    console.error("Could not query expired AI test sessions:", aiFetchError);
+  }
+
+  let aiDeletedCount = 0;
+
+  for (const session of expiredAiSessions ?? []) {
+    if (session.result_file_path) {
+      const { error: storageError } = await supabase.storage
+        .from("ai-results")
+        .remove([session.result_file_path]);
+
+      if (storageError) {
+        console.error(
+          `Failed to delete AI result file for session ${session.id}:`,
+          storageError
+        );
+      }
+    }
+
+    const { error: updateError } = await supabase
+      .from("ai_test_sessions")
+      .update({ is_deleted: true, transcript: [] })
+      .eq("id", session.id);
+
+    if (updateError) {
+      console.error(`Failed to mark AI session ${session.id} as deleted:`, updateError);
+      continue;
+    }
+
+    aiDeletedCount += 1;
+  }
+
+  return NextResponse.json({
+    deleted: deletedCount,
+    aiTestsDeleted: aiDeletedCount,
+    timestamp: now,
+  });
 }

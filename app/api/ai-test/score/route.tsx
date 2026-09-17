@@ -35,6 +35,49 @@ interface ScoringResponse {
   overall_feedback: string;
 }
 
+const CRITERION_KEYS = [
+  "fluency_coherence",
+  "lexical_resource",
+  "grammatical_range",
+  "pronunciation",
+] as const;
+
+/**
+ * Free-tier models often wrap JSON in prose or code fences despite the prompt,
+ * so pull out the outermost JSON object before parsing, then verify the shape
+ * rather than trusting it — a malformed score would otherwise be written to the
+ * database as nulls and surface as a broken result page.
+ */
+function parseScoringResponse(raw: string): ScoringResponse {
+  const withoutFences = raw.replace(/```json|```/g, "").trim();
+  const start = withoutFences.indexOf("{");
+  const end = withoutFences.lastIndexOf("}");
+  if (start === -1 || end === -1 || end <= start) {
+    throw new Error("Model response contained no JSON object.");
+  }
+
+  const parsed = JSON.parse(withoutFences.slice(start, end + 1)) as ScoringResponse;
+
+  for (const key of CRITERION_KEYS) {
+    const criterion = parsed[key];
+    if (!criterion || typeof criterion.score !== "number") {
+      throw new Error(`Model response is missing a valid "${key}" score.`);
+    }
+    if (!Array.isArray(criterion.examples)) criterion.examples = [];
+    if (typeof criterion.justification !== "string") criterion.justification = "";
+    if (typeof criterion.tip !== "string") criterion.tip = "";
+  }
+
+  if (typeof parsed.overall_band !== "number") {
+    const average =
+      CRITERION_KEYS.reduce((sum, key) => sum + parsed[key].score, 0) / CRITERION_KEYS.length;
+    parsed.overall_band = Math.round(average * 2) / 2;
+  }
+  if (typeof parsed.overall_feedback !== "string") parsed.overall_feedback = "";
+
+  return parsed;
+}
+
 export async function POST(request: NextRequest) {
   let body: { token?: string };
   try {
@@ -92,12 +135,15 @@ export async function POST(request: NextRequest) {
     });
 
     const raw = completion.choices[0]?.message?.content ?? "";
-    const clean = raw.replace(/```json|```/g, "").trim();
-    parsed = JSON.parse(clean);
+    parsed = parseScoringResponse(raw);
   } catch (err) {
     console.error("Scoring failed:", err);
     return NextResponse.json({ error: "Could not score the test." }, { status: 502 });
   }
+
+  // ai_test_results.session_id is UNIQUE; clearing any prior row lets a test be
+  // re-scored (used by the admin demo, and after a transient model failure).
+  await supabase.from("ai_test_results").delete().eq("session_id", session.id);
 
   const { data: result, error: resultError } = await supabase
     .from("ai_test_results")
@@ -174,10 +220,14 @@ export async function POST(request: NextRequest) {
 
   await supabase.from("ai_test_bookings").update({ status: "completed" }).eq("id", booking.id);
 
-  try {
-    await sendAiTestResultReadyEmail(booking, body.token);
-  } catch (emailError) {
-    console.error("Failed to send AI test result-ready email:", emailError);
+  // Demo tests are created by the admin with a placeholder address, so there is
+  // no real inbox to notify.
+  if (booking.transaction_id !== "DEMO") {
+    try {
+      await sendAiTestResultReadyEmail(booking, body.token);
+    } catch (emailError) {
+      console.error("Failed to send AI test result-ready email:", emailError);
+    }
   }
 
   return NextResponse.json({ success: true });

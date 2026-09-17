@@ -14,7 +14,7 @@ import {
 import { Button } from "@/components/ui/button";
 import { cn } from "@/lib/utils";
 import { createBrowserAvatar, createSimliAvatar, type AvatarProvider } from "@/lib/ai-test/avatar";
-import { startRecording, stopRecording } from "@/lib/ai-test/recorder";
+import { getMicStream, releaseMic, startRecording, stopRecording } from "@/lib/ai-test/recorder";
 import { detectSilence } from "@/lib/ai-test/silence";
 import type { CueCard, QuestionBankItem } from "@/lib/types";
 
@@ -37,6 +37,7 @@ type ConnectionState = "connecting" | "connected" | "failed";
 
 const PREP_SECONDS = 60;
 const SPEAKING_SECONDS = 120;
+const MIN_ANSWER_MS = 1500;
 
 interface SessionData {
   studentName: string;
@@ -55,8 +56,16 @@ export default function AiTestRoomPage({
   const videoRef = useRef<HTMLVideoElement>(null);
   const audioRef = useRef<HTMLAudioElement>(null);
   const avatarRef = useRef<AvatarProvider | null>(null);
-  const streamRef = useRef<MediaStream | null>(null);
   const stopSilenceWatchRef = useRef<(() => void) | null>(null);
+  const autoStopTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
+  const manualFinishRef = useRef<(() => void) | null>(null);
+
+  // Guards against a turn advancing twice — the silence watcher, the auto-stop
+  // timer, and the student's "I'm done speaking" button can all race.
+  const turnSettledRef = useRef(false);
+  const sessionDataRef = useRef<SessionData | null>(null);
+  const part1IndexRef = useRef(0);
+  const part3IndexRef = useRef(0);
 
   const [phase, setPhase] = useState<RoomPhase>("loading");
   const [loadError, setLoadError] = useState<string | null>(null);
@@ -96,6 +105,12 @@ export default function AiTestRoomPage({
           setPhase("error");
           return;
         }
+        if (!data.part1Questions?.length || !data.part3Questions?.length || !data.cueCard) {
+          setLoadError("This test is missing its question set. Please contact support.");
+          setPhase("error");
+          return;
+        }
+        sessionDataRef.current = data;
         setSessionData(data);
         setPhase("before_start");
       } catch {
@@ -142,7 +157,7 @@ export default function AiTestRoomPage({
       setUsingFallbackAvatar(false);
       setConnectionState("connected");
     } catch (err) {
-      console.error("Simli connection failed, falling back to browser TTS:", err);
+      console.error("Simli connection failed, falling back to browser speech:", err);
       avatarRef.current = createBrowserAvatar();
       setUsingFallbackAvatar(true);
       setConnectionState("connected");
@@ -150,7 +165,7 @@ export default function AiTestRoomPage({
   }, [token]);
 
   useEffect(() => {
-    if (phase === "before_start" && micChecked) {
+    if (phase === "before_start" && micChecked && !avatarRef.current) {
       connectAvatar();
     }
   }, [phase, micChecked, connectAvatar]);
@@ -158,8 +173,9 @@ export default function AiTestRoomPage({
   useEffect(() => {
     return () => {
       avatarRef.current?.destroy();
-      streamRef.current?.getTracks().forEach((t) => t.stop());
       stopSilenceWatchRef.current?.();
+      if (autoStopTimerRef.current) clearTimeout(autoStopTimerRef.current);
+      releaseMic();
     };
   }, []);
 
@@ -170,7 +186,6 @@ export default function AiTestRoomPage({
     } catch (err) {
       console.error("Avatar speak failed:", err);
     }
-    setAvatarStatus("listening");
   }
 
   async function saveTurn(
@@ -191,41 +206,82 @@ export default function AiTestRoomPage({
     }
   }
 
-  async function beginRecording(part: 1 | 2 | 3, questionId: string | null, autoStopMs?: number) {
+  /**
+   * Starts listening for the student's answer. The turn ends exactly once,
+   * whichever of silence detection / the time limit / the manual button fires
+   * first, then `onDone` advances the exam.
+   */
+  async function listenForAnswer(
+    part: 1 | 2 | 3,
+    questionId: string | null,
+    onDone: () => void,
+    options?: { autoStopMs?: number; useSilenceDetection?: boolean }
+  ) {
+    const { autoStopMs, useSilenceDetection = true } = options ?? {};
+
     try {
-      const stream = await startRecording(streamRef.current ?? undefined);
-      streamRef.current = stream;
+      const stream = await startRecording();
+      turnSettledRef.current = false;
       setIsRecording(true);
       setAvatarStatus("listening");
 
-      if (!autoStopMs) {
-        stopSilenceWatchRef.current = detectSilence(stream, () => {
-          finishRecording(part, questionId);
-        });
+      const startedAt = Date.now();
+
+      const finish = async (force = false) => {
+        if (turnSettledRef.current) return;
+        // Ignore silence detected before the student has had a chance to speak.
+        if (!force && Date.now() - startedAt < MIN_ANSWER_MS) return;
+        turnSettledRef.current = true;
+
+        stopSilenceWatchRef.current?.();
+        stopSilenceWatchRef.current = null;
+        if (autoStopTimerRef.current) {
+          clearTimeout(autoStopTimerRef.current);
+          autoStopTimerRef.current = null;
+        }
+        manualFinishRef.current = null;
+
+        await captureAnswer(part, questionId);
+        onDone();
+      };
+
+      manualFinishRef.current = () => void finish(true);
+
+      if (useSilenceDetection) {
+        stopSilenceWatchRef.current = detectSilence(stream, () => void finish());
+      }
+      if (autoStopMs) {
+        autoStopTimerRef.current = setTimeout(() => void finish(true), autoStopMs);
       }
     } catch {
+      setIsRecording(false);
       setMicError("Lost access to your microphone. Please check your browser permissions.");
     }
   }
 
-  async function finishRecording(part: 1 | 2 | 3, questionId: string | null) {
-    stopSilenceWatchRef.current?.();
-    stopSilenceWatchRef.current = null;
-    if (!isRecording) return;
+  /** Stops the recorder, transcribes, and persists the student's answer. */
+  async function captureAnswer(part: 1 | 2 | 3, questionId: string | null) {
     setIsRecording(false);
     setAvatarStatus("processing");
 
-    const blob = await stopRecording(false);
+    const blob = await stopRecording();
+    if (blob.size === 0) {
+      await saveTurn("student", "(No audio was recorded for this answer.)", part, questionId);
+      return;
+    }
+
     try {
       const formData = new FormData();
       formData.append("audio", blob, "answer.webm");
       formData.append("token", token);
       const res = await fetch("/api/ai-test/transcribe", { method: "POST", body: formData });
       const data = await res.json();
-      const text = res.ok ? data.text : "(Could not transcribe this answer.)";
+      const text =
+        res.ok && data.text?.trim() ? data.text : "(Could not transcribe this answer.)";
       await saveTurn("student", text, part, questionId);
     } catch (err) {
       console.error("Transcription failed:", err);
+      await saveTurn("student", "(Could not transcribe this answer.)", part, questionId);
     }
   }
 
@@ -233,8 +289,7 @@ export default function AiTestRoomPage({
     setIsCheckingMic(true);
     setMicError(null);
     try {
-      const stream = await navigator.mediaDevices.getUserMedia({ audio: true });
-      stream.getTracks().forEach((t) => t.stop());
+      await getMicStream();
       setMicChecked(true);
     } catch {
       setMicError(
@@ -246,91 +301,108 @@ export default function AiTestRoomPage({
   }
 
   async function handleBeginTest() {
-    if (!sessionData) return;
+    const data = sessionDataRef.current;
+    if (!data) return;
     setPhase("part1");
-    const question = sessionData.part1Questions[0];
+    part1IndexRef.current = 0;
+    setPart1Index(0);
+    const question = data.part1Questions[0];
     await saveTurn("examiner", question.question_text, 1, question.id, "part1");
     await speak(question.question_text);
-    beginRecording(1, question.id);
+    listenForAnswer(1, question.id, advancePart1);
   }
 
   async function advancePart1() {
-    if (!sessionData) return;
-    await finishRecording(1, sessionData.part1Questions[part1Index].id);
+    const data = sessionDataRef.current;
+    if (!data) return;
 
-    if (part1Index < sessionData.part1Questions.length - 1) {
-      const nextIndex = part1Index + 1;
+    const nextIndex = part1IndexRef.current + 1;
+    if (nextIndex < data.part1Questions.length) {
+      part1IndexRef.current = nextIndex;
       setPart1Index(nextIndex);
-      const question = sessionData.part1Questions[nextIndex];
+      const question = data.part1Questions[nextIndex];
       await saveTurn("examiner", question.question_text, 1, question.id);
       await speak(question.question_text);
-      beginRecording(1, question.id);
-    } else {
-      setPhase("part2_prep");
-      setPrepSecondsLeft(PREP_SECONDS);
-      if (sessionData.cueCard) {
-        await saveTurn(
-          "examiner",
-          `${sessionData.cueCard.topic}. ${sessionData.cueCard.bullet_points.join(", ")}.`,
-          2,
-          sessionData.cueCard.id,
-          "part2_prep"
-        );
-        await speak(`${sessionData.cueCard.topic}. You have one minute to prepare.`);
-      }
+      listenForAnswer(1, question.id, advancePart1);
+      return;
     }
+
+    setPhase("part2_prep");
+    setPrepSecondsLeft(PREP_SECONDS);
+    if (data.cueCard) {
+      await saveTurn(
+        "examiner",
+        `${data.cueCard.topic}. ${data.cueCard.bullet_points.join(", ")}.`,
+        2,
+        data.cueCard.id,
+        "part2_prep"
+      );
+      await speak(
+        `${data.cueCard.topic}. You have one minute to prepare, then up to two minutes to speak.`
+      );
+    }
+    setAvatarStatus("idle");
   }
 
   useEffect(() => {
-    if (phase !== "part2_prep") return;
-    if (prepSecondsLeft <= 0) return;
+    if (phase !== "part2_prep" || prepSecondsLeft <= 0) return;
     const timer = setTimeout(() => setPrepSecondsLeft((s) => s - 1), 1000);
     return () => clearTimeout(timer);
   }, [phase, prepSecondsLeft]);
 
-  async function startSpeakingPart2() {
-    if (!sessionData?.cueCard) return;
+  function startSpeakingPart2() {
+    const data = sessionDataRef.current;
+    if (!data?.cueCard) return;
     setPhase("part2_speaking");
     setSpeakingSecondsLeft(SPEAKING_SECONDS);
-    beginRecording(2, sessionData.cueCard.id, SPEAKING_SECONDS * 1000);
+    // Part 2 is a sustained monologue where natural pauses are expected, so
+    // the 2-minute limit (or the manual button) ends the turn, not silence.
+    listenForAnswer(2, data.cueCard.id, startPart3, {
+      autoStopMs: SPEAKING_SECONDS * 1000,
+      useSilenceDetection: false,
+    });
   }
 
   useEffect(() => {
-    if (phase !== "part2_speaking") return;
-    if (speakingSecondsLeft <= 0) {
-      (async () => {
-        if (!sessionData) return;
-        await finishRecording(2, sessionData.cueCard?.id ?? null);
-        setPhase("part3");
-        const question = sessionData.part3Questions[0];
-        await saveTurn("examiner", question.question_text, 3, question.id, "part3");
-        await speak(question.question_text);
-        beginRecording(3, question.id);
-      })();
-      return;
-    }
+    if (phase !== "part2_speaking" || speakingSecondsLeft <= 0) return;
     const timer = setTimeout(() => setSpeakingSecondsLeft((s) => s - 1), 1000);
     return () => clearTimeout(timer);
-  }, [phase, speakingSecondsLeft]); // eslint-disable-line react-hooks/exhaustive-deps
+  }, [phase, speakingSecondsLeft]);
+
+  async function startPart3() {
+    const data = sessionDataRef.current;
+    if (!data) return;
+    setPhase("part3");
+    part3IndexRef.current = 0;
+    setPart3Index(0);
+    const question = data.part3Questions[0];
+    await saveTurn("examiner", question.question_text, 3, question.id, "part3");
+    await speak(question.question_text);
+    listenForAnswer(3, question.id, advancePart3);
+  }
 
   async function advancePart3() {
-    if (!sessionData) return;
-    await finishRecording(3, sessionData.part3Questions[part3Index].id);
+    const data = sessionDataRef.current;
+    if (!data) return;
 
-    if (part3Index < sessionData.part3Questions.length - 1) {
-      const nextIndex = part3Index + 1;
+    const nextIndex = part3IndexRef.current + 1;
+    if (nextIndex < data.part3Questions.length) {
+      part3IndexRef.current = nextIndex;
       setPart3Index(nextIndex);
-      const question = sessionData.part3Questions[nextIndex];
+      const question = data.part3Questions[nextIndex];
       await saveTurn("examiner", question.question_text, 3, question.id);
       await speak(question.question_text);
-      beginRecording(3, question.id);
-    } else {
-      avatarRef.current?.stop();
-      setAvatarStatus("processing");
-      setPhase("generating");
-      setGeneratingStep(0);
-      runScoring();
+      listenForAnswer(3, question.id, advancePart3);
+      return;
     }
+
+    await speak("Thank you, that is the end of the test. I am preparing your results now.");
+    avatarRef.current?.stop();
+    releaseMic();
+    setAvatarStatus("processing");
+    setPhase("generating");
+    setGeneratingStep(0);
+    runScoring();
   }
 
   async function runScoring() {
@@ -346,15 +418,14 @@ export default function AiTestRoomPage({
     } catch (err) {
       console.error("Scoring failed:", err);
       setLoadError(
-        "We had trouble generating your results. Please contact support with your test link."
+        "We had trouble generating your results. Your answers are saved — please contact support with your test link and we will finish scoring it."
       );
       setPhase("error");
     }
   }
 
   useEffect(() => {
-    if (phase !== "generating") return;
-    if (generatingStep >= 2) return;
+    if (phase !== "generating" || generatingStep >= 2) return;
     const timer = setTimeout(() => setGeneratingStep((s) => s + 1), 2000);
     return () => clearTimeout(timer);
   }, [phase, generatingStep]);
@@ -366,20 +437,22 @@ export default function AiTestRoomPage({
     processing: "Processing...",
   };
 
+  function handleDoneSpeaking() {
+    manualFinishRef.current?.();
+  }
+
   return (
     <div className="flex min-h-screen flex-col bg-slate-950 lg:flex-row">
       <div className="relative flex h-[45vh] flex-col items-center justify-center bg-slate-900 lg:h-screen lg:w-[55%]">
-        {!usingFallbackAvatar ? (
-          <video
-            ref={videoRef}
-            autoPlay
-            playsInline
-            className={cn(
-              "h-40 w-40 rounded-full object-cover sm:h-56 sm:w-56",
-              connectionState !== "connected" && "hidden"
-            )}
-          />
-        ) : null}
+        <video
+          ref={videoRef}
+          autoPlay
+          playsInline
+          className={cn(
+            "h-40 w-40 rounded-full object-cover sm:h-56 sm:w-56",
+            (usingFallbackAvatar || connectionState !== "connected") && "hidden"
+          )}
+        />
         <audio ref={audioRef} autoPlay className="hidden" />
 
         {(usingFallbackAvatar || connectionState !== "connected") && (
@@ -409,6 +482,12 @@ export default function AiTestRoomPage({
               />
             ))}
           </div>
+        )}
+        {usingFallbackAvatar && connectionState === "connected" && (
+          <p className="mt-3 max-w-xs text-center text-xs text-slate-500">
+            Video avatar unavailable — continuing with audio only. Your test is
+            unaffected.
+          </p>
         )}
       </div>
 
@@ -455,18 +534,7 @@ export default function AiTestRoomPage({
               <p className="mt-1 text-sm text-text-secondary">
                 We need to confirm your microphone is working before you begin.
               </p>
-              {micError && (
-                <p className="mt-3 text-sm text-error">
-                  {micError} You can also check your{" "}
-                  <a
-                    href="chrome://settings/content/microphone"
-                    className="underline"
-                  >
-                    browser microphone settings
-                  </a>
-                  .
-                </p>
-              )}
+              {micError && <p className="mt-3 text-sm text-error">{micError}</p>}
               <Button
                 variant={micChecked ? "secondary" : "primary"}
                 className="mt-4 w-full"
@@ -491,10 +559,12 @@ export default function AiTestRoomPage({
               disabled={!micChecked || connectionState !== "connected"}
               onClick={handleBeginTest}
             >
-              {micChecked && connectionState === "connecting" ? (
+              {micChecked && connectionState === "connecting" && (
                 <Loader2 className="h-4 w-4 animate-spin" />
-              ) : null}
-              Begin Test
+              )}
+              {micChecked && connectionState === "connecting"
+                ? "Connecting to your examiner..."
+                : "Begin Test"}
             </Button>
             <p className="mt-3 text-center text-xs text-text-muted">~15 minutes</p>
           </div>
@@ -512,13 +582,14 @@ export default function AiTestRoomPage({
               {sessionData.part1Questions[part1Index].question_text}
             </p>
 
-            <RecordingIndicator isRecording={isRecording} />
+            <RecordingIndicator isRecording={isRecording} avatarStatus={avatarStatus} />
 
             <Button
               variant="ghost"
               size="sm"
               className="mt-6 self-center text-text-muted"
-              onClick={advancePart1}
+              disabled={!isRecording}
+              onClick={handleDoneSpeaking}
             >
               I&apos;m done speaking
             </Button>
@@ -558,11 +629,14 @@ export default function AiTestRoomPage({
               </p>
             </div>
 
-            {prepSecondsLeft <= 0 && (
-              <Button size="lg" variant="accent" className="mt-6 w-full" onClick={startSpeakingPart2}>
-                Start Speaking
-              </Button>
-            )}
+            <Button
+              size="lg"
+              variant="accent"
+              className="mt-6 w-full"
+              onClick={startSpeakingPart2}
+            >
+              {prepSecondsLeft > 0 ? "Skip Prep & Start Speaking" : "Start Speaking"}
+            </Button>
           </div>
         )}
 
@@ -574,6 +648,11 @@ export default function AiTestRoomPage({
             <h3 className="mt-3 text-lg font-semibold text-text-primary">
               {sessionData.cueCard.topic}
             </h3>
+            <ul className="mt-3 list-disc space-y-1 pl-5 text-sm text-text-secondary">
+              {sessionData.cueCard.bullet_points.map((point) => (
+                <li key={point}>{point}</li>
+              ))}
+            </ul>
 
             <div className="mt-6 h-2 w-full overflow-hidden rounded-full bg-gray-200">
               <div
@@ -588,7 +667,17 @@ export default function AiTestRoomPage({
               {(speakingSecondsLeft % 60).toString().padStart(2, "0")} remaining
             </p>
 
-            <RecordingIndicator isRecording={isRecording} />
+            <RecordingIndicator isRecording={isRecording} avatarStatus={avatarStatus} />
+
+            <Button
+              variant="ghost"
+              size="sm"
+              className="mt-6 self-center text-text-muted"
+              disabled={!isRecording}
+              onClick={handleDoneSpeaking}
+            >
+              I&apos;m done speaking
+            </Button>
           </div>
         )}
 
@@ -604,13 +693,14 @@ export default function AiTestRoomPage({
               {sessionData.part3Questions[part3Index].question_text}
             </p>
 
-            <RecordingIndicator isRecording={isRecording} />
+            <RecordingIndicator isRecording={isRecording} avatarStatus={avatarStatus} />
 
             <Button
               variant="ghost"
               size="sm"
               className="mt-6 self-center text-text-muted"
-              onClick={advancePart3}
+              disabled={!isRecording}
+              onClick={handleDoneSpeaking}
             >
               I&apos;m done speaking
             </Button>
@@ -642,6 +732,9 @@ export default function AiTestRoomPage({
                 )
               )}
             </div>
+            <p className="mt-5 text-xs text-text-muted">
+              This can take up to a minute. Please keep this page open.
+            </p>
           </div>
         )}
       </div>
@@ -649,28 +742,43 @@ export default function AiTestRoomPage({
   );
 }
 
-function RecordingIndicator({ isRecording }: { isRecording: boolean }) {
+function RecordingIndicator({
+  isRecording,
+  avatarStatus,
+}: {
+  isRecording: boolean;
+  avatarStatus: AvatarStatus;
+}) {
+  const label = isRecording
+    ? "Recording your answer..."
+    : avatarStatus === "speaking"
+      ? "Listen to the question..."
+      : avatarStatus === "processing"
+        ? "Processing your answer..."
+        : "Preparing microphone...";
+
   return (
     <div
       className={cn(
         "mt-6 flex items-center justify-center gap-2 rounded-xl border-2 border-dashed px-5 py-6 text-sm font-medium",
-        isRecording ? "border-error bg-red-50 text-error" : "border-border bg-gray-50 text-text-secondary"
+        isRecording
+          ? "border-error bg-red-50 text-error"
+          : "border-border bg-gray-50 text-text-secondary"
       )}
     >
       {isRecording ? (
-        <>
-          <span className="relative flex h-2.5 w-2.5">
-            <span className="absolute inline-flex h-full w-full animate-ping rounded-full bg-error opacity-75" />
-            <span className="relative inline-flex h-2.5 w-2.5 rounded-full bg-error" />
-          </span>
-          Recording your answer...
-        </>
+        <span className="relative flex h-2.5 w-2.5">
+          <span className="absolute inline-flex h-full w-full animate-ping rounded-full bg-error opacity-75" />
+          <span className="relative inline-flex h-2.5 w-2.5 rounded-full bg-error" />
+        </span>
+      ) : avatarStatus === "speaking" ? (
+        <Volume2 className="h-4 w-4" />
+      ) : avatarStatus === "processing" ? (
+        <Loader2 className="h-4 w-4 animate-spin" />
       ) : (
-        <>
-          <Mic className="h-4 w-4" />
-          Preparing microphone...
-        </>
+        <Mic className="h-4 w-4" />
       )}
+      {label}
     </div>
   );
 }
