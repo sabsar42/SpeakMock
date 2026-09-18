@@ -9,9 +9,10 @@ import { AiTestReportPdf } from "@/lib/ai-test/pdf/report";
 import type { AiTestBooking, AiTestSession } from "@/lib/types";
 
 // One LLM call can take 20-50s on free-tier models, and this route can try
-// several in sequence plus generate a PDF afterward, so it needs more than
-// Vercel's 10s default. 60s is the max allowed on the Hobby plan.
-export const maxDuration = 60;
+// several in sequence plus generate a PDF afterward. With Fluid Compute
+// (Vercel's default), Hobby allows up to 300s — use most of that budget so
+// the fallback loop below has real room to try multiple models.
+export const maxDuration = 280;
 
 function createOpenRouterClient() {
   return new OpenAI({
@@ -132,8 +133,8 @@ export async function POST(request: NextRequest) {
   // above): a single slow/hung model must not consume the whole request, and
   // once time is nearly spent, stop trying further fallbacks rather than
   // risk a hard timeout with no response at all.
-  const REQUEST_BUDGET_MS = 55_000; // stay under the 60s function limit
-  const PER_MODEL_TIMEOUT_MS = 20_000;
+  const REQUEST_BUDGET_MS = 250_000; // stay under the 280s function limit
+  const PER_MODEL_TIMEOUT_MS = 30_000;
   const startedAt = Date.now();
 
   const openrouter = createOpenRouterClient();
