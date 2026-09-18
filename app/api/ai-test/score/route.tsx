@@ -8,6 +8,11 @@ import { SCORING_SYSTEM_PROMPT } from "@/lib/ai-test/scoring-prompt";
 import { AiTestReportPdf } from "@/lib/ai-test/pdf/report";
 import type { AiTestBooking, AiTestSession } from "@/lib/types";
 
+// One LLM call can take 20-50s on free-tier models, and this route can try
+// several in sequence plus generate a PDF afterward, so it needs more than
+// Vercel's 10s default. 60s is the max allowed on the Hobby plan.
+export const maxDuration = 60;
+
 function createOpenRouterClient() {
   return new OpenAI({
     baseURL: "https://openrouter.ai/api/v1",
@@ -122,7 +127,15 @@ export async function POST(request: NextRequest) {
 
   // Free-tier OpenRouter models are frequently and individually rate-limited
   // upstream — one model failing is routine, not a sign every model is down.
-  // Try each configured model in turn and only give up once all have failed.
+  // Try each configured model in turn and only give up once all have failed,
+  // but budget the total time against Vercel's function limit (maxDuration
+  // above): a single slow/hung model must not consume the whole request, and
+  // once time is nearly spent, stop trying further fallbacks rather than
+  // risk a hard timeout with no response at all.
+  const REQUEST_BUDGET_MS = 55_000; // stay under the 60s function limit
+  const PER_MODEL_TIMEOUT_MS = 20_000;
+  const startedAt = Date.now();
+
   const openrouter = createOpenRouterClient();
   const modelsToTry = scoringModelFallbackOrder();
   let parsed: ScoringResponse | null = null;
@@ -130,15 +143,24 @@ export async function POST(request: NextRequest) {
   let lastError: unknown = null;
 
   for (const candidateModel of modelsToTry) {
+    const elapsed = Date.now() - startedAt;
+    if (elapsed > REQUEST_BUDGET_MS - 5000) {
+      lastError = new Error("Time budget exhausted before all models were tried.");
+      break;
+    }
+
     try {
-      const completion = await openrouter.chat.completions.create({
-        model: candidateModel,
-        messages: [
-          { role: "system", content: SCORING_SYSTEM_PROMPT },
-          { role: "user", content: transcriptText },
-        ],
-        temperature: 0.3,
-      });
+      const completion = await openrouter.chat.completions.create(
+        {
+          model: candidateModel,
+          messages: [
+            { role: "system", content: SCORING_SYSTEM_PROMPT },
+            { role: "user", content: transcriptText },
+          ],
+          temperature: 0.3,
+        },
+        { timeout: PER_MODEL_TIMEOUT_MS }
+      );
 
       const raw = completion.choices[0]?.message?.content ?? "";
       parsed = parseScoringResponse(raw);
