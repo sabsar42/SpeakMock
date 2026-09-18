@@ -222,32 +222,43 @@ export async function POST(request: NextRequest) {
     return NextResponse.json({ error: "Could not save scoring result." }, { status: 500 });
   }
 
-  const pdfBuffer = await renderToBuffer(
-    <AiTestReportPdf
-      studentName={booking.student_name}
-      testDate={new Date().toLocaleDateString("en-US", {
-        weekday: "short",
-        month: "short",
-        day: "numeric",
-        year: "numeric",
-      })}
-      fluencyCoherence={parsed.fluency_coherence}
-      lexicalResource={parsed.lexical_resource}
-      grammaticalRange={parsed.grammatical_range}
-      pronunciation={parsed.pronunciation}
-      overallBand={parsed.overall_band}
-      overallFeedback={parsed.overall_feedback}
-      transcript={session.transcript}
-    />
-  );
+  // The score is already saved at this point, so a PDF failure here must not
+  // fail the whole request — the student should still get their result page.
+  // (This previously crashed the route with an unhandled rejection, returning
+  // a bare 500 with no body even though scoring itself had succeeded.)
+  let resultFilePath: string | null = null;
+  try {
+    const pdfBuffer = await renderToBuffer(
+      <AiTestReportPdf
+        studentName={booking.student_name}
+        testDate={new Date().toLocaleDateString("en-US", {
+          weekday: "short",
+          month: "short",
+          day: "numeric",
+          year: "numeric",
+        })}
+        fluencyCoherence={parsed.fluency_coherence}
+        lexicalResource={parsed.lexical_resource}
+        grammaticalRange={parsed.grammatical_range}
+        pronunciation={parsed.pronunciation}
+        overallBand={parsed.overall_band}
+        overallFeedback={parsed.overall_feedback}
+        transcript={session.transcript}
+      />
+    );
 
-  const storagePath = `${session.id}/report.pdf`;
-  const { error: uploadError } = await supabase.storage
-    .from("ai-results")
-    .upload(storagePath, pdfBuffer, { contentType: "application/pdf", upsert: true });
+    const storagePath = `${session.id}/report.pdf`;
+    const { error: uploadError } = await supabase.storage
+      .from("ai-results")
+      .upload(storagePath, pdfBuffer, { contentType: "application/pdf", upsert: true });
 
-  if (uploadError) {
-    console.error("PDF upload failed:", uploadError);
+    if (uploadError) {
+      console.error("PDF upload failed:", uploadError);
+    } else {
+      resultFilePath = storagePath;
+    }
+  } catch (pdfError) {
+    console.error("PDF generation failed:", pdfError);
   }
 
   const now = new Date();
@@ -256,7 +267,7 @@ export async function POST(request: NextRequest) {
   await supabase
     .from("ai_test_sessions")
     .update({
-      result_file_path: uploadError ? null : storagePath,
+      result_file_path: resultFilePath,
       ended_at: now.toISOString(),
       expires_at: expiresAt.toISOString(),
       phase: "completed",
