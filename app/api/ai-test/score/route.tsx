@@ -22,6 +22,11 @@ function createOpenRouterClient() {
       "HTTP-Referer": process.env.NEXT_PUBLIC_APP_URL ?? "http://localhost:3000",
       "X-Title": "SpeakMock",
     },
+    // The SDK retries failed/timed-out requests twice by default, which
+    // stacks with our own across-model fallback below: a single stuck model
+    // could otherwise consume 3x its timeout before this loop even sees the
+    // failure. We already retry via other models, so disable the SDK's own.
+    maxRetries: 0,
   });
 }
 
