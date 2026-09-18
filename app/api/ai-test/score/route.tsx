@@ -1,11 +1,10 @@
 import { NextRequest, NextResponse } from "next/server";
 import OpenAI from "openai";
-import { renderToBuffer } from "@react-pdf/renderer";
 import { supabaseServer } from "@/lib/supabase/server";
 import { sendAiTestResultReadyEmail } from "@/lib/resend/emails";
 import { scoringModelFallbackOrder } from "@/lib/ai-test/scoring-model";
 import { SCORING_SYSTEM_PROMPT } from "@/lib/ai-test/scoring-prompt";
-import { AiTestReportPdf } from "@/lib/ai-test/pdf/report";
+import { generateAiTestReportPdf } from "@/lib/ai-test/pdf/report";
 import type { AiTestBooking, AiTestSession } from "@/lib/types";
 
 // One LLM call can take 20-50s on free-tier models, and this route can try
@@ -228,24 +227,22 @@ export async function POST(request: NextRequest) {
   // a bare 500 with no body even though scoring itself had succeeded.)
   let resultFilePath: string | null = null;
   try {
-    const pdfBuffer = await renderToBuffer(
-      <AiTestReportPdf
-        studentName={booking.student_name}
-        testDate={new Date().toLocaleDateString("en-US", {
-          weekday: "short",
-          month: "short",
-          day: "numeric",
-          year: "numeric",
-        })}
-        fluencyCoherence={parsed.fluency_coherence}
-        lexicalResource={parsed.lexical_resource}
-        grammaticalRange={parsed.grammatical_range}
-        pronunciation={parsed.pronunciation}
-        overallBand={parsed.overall_band}
-        overallFeedback={parsed.overall_feedback}
-        transcript={session.transcript}
-      />
-    );
+    const pdfBuffer = await generateAiTestReportPdf({
+      studentName: booking.student_name,
+      testDate: new Date().toLocaleDateString("en-US", {
+        weekday: "short",
+        month: "short",
+        day: "numeric",
+        year: "numeric",
+      }),
+      fluencyCoherence: parsed.fluency_coherence,
+      lexicalResource: parsed.lexical_resource,
+      grammaticalRange: parsed.grammatical_range,
+      pronunciation: parsed.pronunciation,
+      overallBand: parsed.overall_band,
+      overallFeedback: parsed.overall_feedback,
+      transcript: session.transcript,
+    });
 
     const storagePath = `${session.id}/report.pdf`;
     const { error: uploadError } = await supabase.storage
