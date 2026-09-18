@@ -3,7 +3,7 @@ import OpenAI from "openai";
 import { renderToBuffer } from "@react-pdf/renderer";
 import { supabaseServer } from "@/lib/supabase/server";
 import { sendAiTestResultReadyEmail } from "@/lib/resend/emails";
-import { pickScoringModel } from "@/lib/ai-test/scoring-model";
+import { scoringModelFallbackOrder } from "@/lib/ai-test/scoring-model";
 import { SCORING_SYSTEM_PROMPT } from "@/lib/ai-test/scoring-prompt";
 import { AiTestReportPdf } from "@/lib/ai-test/pdf/report";
 import type { AiTestBooking, AiTestSession } from "@/lib/types";
@@ -120,25 +120,42 @@ export async function POST(request: NextRequest) {
     return NextResponse.json({ error: "No transcript to score." }, { status: 400 });
   }
 
-  const model = pickScoringModel();
-  let parsed: ScoringResponse;
+  // Free-tier OpenRouter models are frequently and individually rate-limited
+  // upstream — one model failing is routine, not a sign every model is down.
+  // Try each configured model in turn and only give up once all have failed.
+  const openrouter = createOpenRouterClient();
+  const modelsToTry = scoringModelFallbackOrder();
+  let parsed: ScoringResponse | null = null;
+  let modelUsed: string | null = null;
+  let lastError: unknown = null;
 
-  try {
-    const openrouter = createOpenRouterClient();
-    const completion = await openrouter.chat.completions.create({
-      model,
-      messages: [
-        { role: "system", content: SCORING_SYSTEM_PROMPT },
-        { role: "user", content: transcriptText },
-      ],
-      temperature: 0.3,
-    });
+  for (const candidateModel of modelsToTry) {
+    try {
+      const completion = await openrouter.chat.completions.create({
+        model: candidateModel,
+        messages: [
+          { role: "system", content: SCORING_SYSTEM_PROMPT },
+          { role: "user", content: transcriptText },
+        ],
+        temperature: 0.3,
+      });
 
-    const raw = completion.choices[0]?.message?.content ?? "";
-    parsed = parseScoringResponse(raw);
-  } catch (err) {
-    console.error("Scoring failed:", err);
-    return NextResponse.json({ error: "Could not score the test." }, { status: 502 });
+      const raw = completion.choices[0]?.message?.content ?? "";
+      parsed = parseScoringResponse(raw);
+      modelUsed = candidateModel;
+      break;
+    } catch (err) {
+      console.error(`Scoring failed with model ${candidateModel}:`, err);
+      lastError = err;
+    }
+  }
+
+  if (!parsed || !modelUsed) {
+    console.error("All scoring models failed:", lastError);
+    return NextResponse.json(
+      { error: "All scoring models are temporarily unavailable. Please try again shortly." },
+      { status: 502 }
+    );
   }
 
   // ai_test_results.session_id is UNIQUE; clearing any prior row lets a test be
@@ -168,7 +185,7 @@ export async function POST(request: NextRequest) {
       overall_band: parsed.overall_band,
       overall_feedback: parsed.overall_feedback,
       raw_llm_response: parsed,
-      model_used: model,
+      model_used: modelUsed,
     })
     .select()
     .single();
