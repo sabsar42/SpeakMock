@@ -16,11 +16,23 @@ import { AdminShell } from "@/components/admin/admin-shell";
 import { AdminCard } from "@/components/admin/admin-card";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
-import type { AiTestBooking, AiTestBookingStatus } from "@/lib/types";
+import {
+  Select,
+  SelectContent,
+  SelectItem,
+  SelectTrigger,
+  SelectValue,
+} from "@/components/ui/select";
+import type { AiTestBooking, AiTestBookingStatus, AvatarProviderName } from "@/lib/types";
 
 interface AiTestBookingRow extends AiTestBooking {
-  ai_test_sessions: { token: string }[] | null;
+  ai_test_sessions: { token: string; avatar_provider: AvatarProviderName }[] | null;
 }
+
+const PROVIDER_LABELS: Record<AvatarProviderName, string> = {
+  simli: "Simli",
+  spatius: "Spatius",
+};
 
 const badgeVariantByStatus: Record<
   AiTestBookingStatus,
@@ -42,6 +54,8 @@ export default function AdminAiTestsPage() {
   const [copiedToken, setCopiedToken] = useState<string | null>(null);
 
   const [demoBusy, setDemoBusy] = useState<"score" | "walkthrough" | "cleanup" | null>(null);
+  const [providerChoice, setProviderChoice] = useState<Record<string, AvatarProviderName>>({});
+  const [demoProvider, setDemoProvider] = useState<AvatarProviderName>("simli");
 
   const loadBookings = useCallback(async () => {
     setIsLoading(true);
@@ -67,7 +81,10 @@ export default function AdminAiTestsPage() {
       const res = await fetch("/api/admin/ai-test/approve", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ booking_id: id }),
+        body: JSON.stringify({
+          booking_id: id,
+          avatar_provider: providerChoice[id] ?? "simli",
+        }),
       });
       const data = await res.json();
       if (!res.ok) throw new Error(data.error ?? "Could not approve booking.");
@@ -149,7 +166,7 @@ export default function AdminAiTestsPage() {
       const res = await fetch("/api/admin/ai-test/demo", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ mode: "empty" }),
+        body: JSON.stringify({ mode: "empty", avatar_provider: demoProvider }),
       });
       const data = await res.json();
       if (!res.ok) throw new Error(data.error ?? "Could not create the demo test.");
@@ -211,6 +228,21 @@ export default function AdminAiTestsPage() {
                 )}
                 See a Scored Result
               </Button>
+              <Select
+                value={demoProvider}
+                onValueChange={(value) => setDemoProvider(value as AvatarProviderName)}
+              >
+                <SelectTrigger className="h-9 w-[110px] text-xs">
+                  <SelectValue />
+                </SelectTrigger>
+                <SelectContent>
+                  {(Object.keys(PROVIDER_LABELS) as AvatarProviderName[]).map((provider) => (
+                    <SelectItem key={provider} value={provider}>
+                      {PROVIDER_LABELS[provider]}
+                    </SelectItem>
+                  ))}
+                </SelectContent>
+              </Select>
               <Button
                 size="sm"
                 variant="outline"
@@ -243,7 +275,8 @@ export default function AdminAiTestsPage() {
 
             <p className="mt-3 text-xs text-text-muted">
               &ldquo;See a Scored Result&rdquo; uses one AI scoring call. &ldquo;Try the Test
-              Room&rdquo; uses your Simli credit and a microphone, exactly like a real test.
+              Room&rdquo; uses the selected avatar provider&apos;s credit and a microphone,
+              exactly like a real test.
             </p>
           </div>
         </div>
@@ -286,6 +319,7 @@ export default function AdminAiTestsPage() {
           <tbody>
             {bookings.map((booking) => {
               const token = booking.ai_test_sessions?.[0]?.token ?? null;
+              const provider = booking.ai_test_sessions?.[0]?.avatar_provider ?? null;
               const isDemo = booking.transaction_id === "DEMO";
 
               return (
@@ -310,7 +344,14 @@ export default function AdminAiTestsPage() {
                     {booking.transaction_id}
                   </td>
                   <td className="px-4 py-3">
-                    <Badge variant={badgeVariantByStatus[booking.status]}>{booking.status}</Badge>
+                    <div className="flex items-center gap-1.5">
+                      <Badge variant={badgeVariantByStatus[booking.status]}>{booking.status}</Badge>
+                      {provider && (
+                        <span className="rounded-full border border-border bg-gray-50 px-2 py-0.5 text-[10px] font-medium uppercase tracking-wide text-text-muted">
+                          {PROVIDER_LABELS[provider]}
+                        </span>
+                      )}
+                    </div>
                   </td>
                   <td className="px-4 py-3 text-sm text-text-muted">
                     {new Date(booking.created_at).toLocaleDateString()}
@@ -319,6 +360,28 @@ export default function AdminAiTestsPage() {
                     <div className="flex flex-wrap items-center gap-2">
                       {booking.status === "pending" && (
                         <>
+                          <Select
+                            value={providerChoice[booking.id] ?? "simli"}
+                            onValueChange={(value) =>
+                              setProviderChoice((prev) => ({
+                                ...prev,
+                                [booking.id]: value as AvatarProviderName,
+                              }))
+                            }
+                          >
+                            <SelectTrigger className="h-9 w-[110px] text-xs">
+                              <SelectValue />
+                            </SelectTrigger>
+                            <SelectContent>
+                              {(Object.keys(PROVIDER_LABELS) as AvatarProviderName[]).map(
+                                (provider) => (
+                                  <SelectItem key={provider} value={provider}>
+                                    {PROVIDER_LABELS[provider]}
+                                  </SelectItem>
+                                )
+                              )}
+                            </SelectContent>
+                          </Select>
                           <Button
                             size="sm"
                             onClick={() => handleApprove(booking.id)}

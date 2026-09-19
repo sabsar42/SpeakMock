@@ -130,11 +130,15 @@ export interface TranscriptTurn {
   at: string;
 }
 
+export type AvatarProviderName = "simli" | "spatius";
+
 export interface AiTestSession {
   id: string;
   booking_id: string;
   token: string;
   simli_session_id: string | null;
+  avatar_provider: AvatarProviderName;
+  spatius_session_id: string | null;
   selected_part1_questions: string[];
   selected_cue_card_id: string | null;
   selected_part3_questions: string[];

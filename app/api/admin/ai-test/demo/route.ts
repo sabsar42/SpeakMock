@@ -2,7 +2,9 @@ import { NextRequest, NextResponse } from "next/server";
 import { nanoid } from "nanoid";
 import { supabaseServer } from "@/lib/supabase/server";
 import { requireAdmin } from "@/lib/require-admin";
-import type { CueCard, QuestionBankItem, TranscriptTurn } from "@/lib/types";
+import type { AvatarProviderName, CueCard, QuestionBankItem, TranscriptTurn } from "@/lib/types";
+
+const VALID_PROVIDERS: AvatarProviderName[] = ["simli", "spatius"];
 
 /**
  * Sample answers at roughly band 6-7, used to demo the scoring pipeline
@@ -35,13 +37,17 @@ export async function POST(request: NextRequest) {
   const unauthorized = await requireAdmin();
   if (unauthorized) return unauthorized;
 
-  let body: { mode?: "prefilled" | "empty" };
+  let body: { mode?: "prefilled" | "empty"; avatar_provider?: string };
   try {
     body = await request.json();
   } catch {
     body = {};
   }
   const mode = body.mode ?? "prefilled";
+  const avatarProvider: AvatarProviderName =
+    body.avatar_provider && VALID_PROVIDERS.includes(body.avatar_provider as AvatarProviderName)
+      ? (body.avatar_provider as AvatarProviderName)
+      : "simli";
 
   const supabase = supabaseServer();
 
@@ -144,6 +150,7 @@ export async function POST(request: NextRequest) {
   const { error: sessionError } = await supabase.from("ai_test_sessions").insert({
     booking_id: booking.id,
     token,
+    avatar_provider: avatarProvider,
     selected_part1_questions: part1Pool.map((q) => q.id),
     selected_cue_card_id: cueCard.id,
     selected_part3_questions: part3Pool.map((q) => q.id),

@@ -1,4 +1,5 @@
 import { SimliClient } from "simli-client";
+import { AvatarSDK, AvatarManager, AvatarView, ConversationState } from "@spatius/avatarkit";
 
 export interface AvatarProvider {
   /** Resolves only once the avatar has finished speaking the text aloud. */
@@ -71,6 +72,105 @@ export function createSimliAvatar({
       simliClient.stop();
     },
   };
+}
+
+interface CreateSpatiusAvatarOptions {
+  avatarView: AvatarView;
+  /** Our own app session token (from the URL), used to authorize the TTS route. */
+  appSessionToken: string;
+}
+
+const SPATIUS_STATE_TIMEOUT_MS = 15_000;
+
+/**
+ * Wraps a connected Spatius AvatarView behind the AvatarProvider interface,
+ * mirroring createSimliAvatar. Spatius has no built-in TTS either, so this
+ * fetches PCM16 audio from our own /api/ai-test/speak route exactly like the
+ * Simli path, and feeds it to the avatar's controller as a single send() call
+ * (the SDK buffers the whole clip and streams it out internally).
+ *
+ * Spatius has no "finished speaking" event like Simli's `silent` — instead we
+ * watch controller.onConversationState for a transition back to `idle`. Per
+ * Spatius's own docs this can fire slightly before the tail of the audio
+ * actually finishes playing, so we also cap the wait with the clip's own
+ * duration as a safety net either way.
+ */
+export function createSpatiusAvatar({
+  avatarView,
+  appSessionToken,
+}: CreateSpatiusAvatarOptions): AvatarProvider {
+  const controller = avatarView.controller;
+
+  return {
+    speak: async (text: string) => {
+      const res = await fetch("/api/ai-test/speak", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ token: appSessionToken, text }),
+      });
+      if (!res.ok) throw new Error("Could not generate speech audio.");
+
+      const buffer = await res.arrayBuffer();
+      const audioDurationMs = (buffer.byteLength / PCM16_BYTES_PER_SECOND) * 1000;
+
+      const finished = new Promise<void>((resolve) => {
+        let settled = false;
+        const done = () => {
+          if (settled) return;
+          settled = true;
+          controller.onConversationState = null;
+          clearTimeout(fallbackTimer);
+          resolve();
+        };
+        const fallbackTimer = setTimeout(
+          done,
+          Math.min(audioDurationMs + 2000, SPATIUS_STATE_TIMEOUT_MS)
+        );
+        controller.onConversationState = (state: ConversationState) => {
+          if (state === ConversationState.idle) done();
+        };
+      });
+
+      controller.send(buffer, true);
+
+      await finished;
+    },
+    stop: () => controller.interrupt(),
+    destroy: () => {
+      controller.close();
+      avatarView.dispose();
+      AvatarSDK.cleanup();
+    },
+  };
+}
+
+/**
+ * Connects to Spatius and returns a ready AvatarView. Must be called from a
+ * user-gesture handler (initializeAudioContext requires it). Throws on any
+ * failure so the caller can fall back to createBrowserAvatar, same pattern
+ * as the Simli connection path.
+ */
+export async function connectSpatiusAvatar({
+  appId,
+  sessionToken,
+  avatarId,
+  container,
+}: {
+  appId: string;
+  sessionToken: string;
+  avatarId: string;
+  container: HTMLElement;
+}): Promise<AvatarView> {
+  await AvatarSDK.initialize(appId, {});
+  AvatarSDK.setSessionToken(sessionToken);
+
+  const avatar = await AvatarManager.shared.load(avatarId);
+  const avatarView = new AvatarView(avatar, container);
+
+  await avatarView.controller.initializeAudioContext();
+  await avatarView.controller.start();
+
+  return avatarView;
 }
 
 /** Fallback: plays audio directly in the browser via Web Speech API, with no

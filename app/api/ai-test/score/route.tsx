@@ -1,7 +1,7 @@
 import { NextRequest, NextResponse } from "next/server";
-import OpenAI from "openai";
 import { supabaseServer } from "@/lib/supabase/server";
 import { sendAiTestResultReadyEmail } from "@/lib/resend/emails";
+import { createOpenRouterClient } from "@/lib/ai-test/openrouter";
 import { scoringModelFallbackOrder } from "@/lib/ai-test/scoring-model";
 import { SCORING_SYSTEM_PROMPT } from "@/lib/ai-test/scoring-prompt";
 import { generateAiTestReportPdf } from "@/lib/ai-test/pdf/report";
@@ -12,22 +12,6 @@ import type { AiTestBooking, AiTestSession } from "@/lib/types";
 // (Vercel's default), Hobby allows up to 300s — use most of that budget so
 // the fallback loop below has real room to try multiple models.
 export const maxDuration = 280;
-
-function createOpenRouterClient() {
-  return new OpenAI({
-    baseURL: "https://openrouter.ai/api/v1",
-    apiKey: process.env.OPENROUTER_API_KEY,
-    defaultHeaders: {
-      "HTTP-Referer": process.env.NEXT_PUBLIC_APP_URL ?? "http://localhost:3000",
-      "X-Title": "SpeakMock",
-    },
-    // The SDK retries failed/timed-out requests twice by default, which
-    // stacks with our own across-model fallback below: a single stuck model
-    // could otherwise consume 3x its timeout before this loop even sees the
-    // failure. We already retry via other models, so disable the SDK's own.
-    maxRetries: 0,
-  });
-}
 
 interface ScoredCriterion {
   score: number;

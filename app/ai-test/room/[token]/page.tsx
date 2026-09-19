@@ -9,14 +9,29 @@ import {
   Mic,
   MicOff,
   RefreshCw,
+  Video,
+  VideoOff,
   Volume2,
 } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { cn } from "@/lib/utils";
-import { createBrowserAvatar, createSimliAvatar, type AvatarProvider } from "@/lib/ai-test/avatar";
-import { getMicStream, releaseMic, startRecording, stopRecording } from "@/lib/ai-test/recorder";
+import {
+  connectSpatiusAvatar,
+  createBrowserAvatar,
+  createSimliAvatar,
+  createSpatiusAvatar,
+  type AvatarProvider,
+} from "@/lib/ai-test/avatar";
+import {
+  getCameraStream,
+  getMicStream,
+  releaseCamera,
+  releaseMic,
+  startRecording,
+  stopRecording,
+} from "@/lib/ai-test/recorder";
 import { detectSilence } from "@/lib/ai-test/silence";
-import type { CueCard, QuestionBankItem } from "@/lib/types";
+import type { AvatarProviderName, CueCard, QuestionBankItem } from "@/lib/types";
 
 const AVATAR_NAME = process.env.NEXT_PUBLIC_AVATAR_NAME ?? "Rami";
 
@@ -41,6 +56,7 @@ const MIN_ANSWER_MS = 1500;
 
 interface SessionData {
   studentName: string;
+  avatarProvider: AvatarProviderName;
   part1Questions: QuestionBankItem[];
   part3Questions: QuestionBankItem[];
   cueCard: CueCard | null;
@@ -55,6 +71,8 @@ export default function AiTestRoomPage({
 
   const videoRef = useRef<HTMLVideoElement>(null);
   const audioRef = useRef<HTMLAudioElement>(null);
+  const selfViewRef = useRef<HTMLVideoElement>(null);
+  const spatiusContainerRef = useRef<HTMLDivElement>(null);
   const avatarRef = useRef<AvatarProvider | null>(null);
   const stopSilenceWatchRef = useRef<(() => void) | null>(null);
   const autoStopTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
@@ -79,6 +97,13 @@ export default function AiTestRoomPage({
   const [micError, setMicError] = useState<string | null>(null);
   const [micChecked, setMicChecked] = useState(false);
   const [isCheckingMic, setIsCheckingMic] = useState(false);
+
+  // Purely a self-view — this stream is never sent anywhere or analyzed, it
+  // just makes the exam feel like a real video call. Independent of the
+  // mic/recording pipeline so a camera failure can never block the exam.
+  const [cameraOn, setCameraOn] = useState(false);
+  const [cameraError, setCameraError] = useState<string | null>(null);
+  const [isTogglingCamera, setIsTogglingCamera] = useState(false);
 
   const [part1Index, setPart1Index] = useState(0);
   const [part3Index, setPart3Index] = useState(0);
@@ -131,38 +156,68 @@ export default function AiTestRoomPage({
     setBrowserCheck(isChromeOrEdge ? "supported" : "unsupported");
   }, []);
 
-  // --- Connect to Simli once we know the mic works ---
+  // --- Connect to whichever avatar backend the admin picked for this booking ---
+  const connectSimli = useCallback(async () => {
+    const res = await fetch("/api/ai-test/simli-session", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ token }),
+    });
+    const data = await res.json();
+    if (!res.ok) throw new Error(data.error ?? "Simli session failed");
+
+    if (!videoRef.current || !audioRef.current) throw new Error("Missing media elements");
+
+    const simliClient = new SimliClient(
+      data.session_token,
+      videoRef.current,
+      audioRef.current,
+      data.ice_servers ?? null
+    );
+    await simliClient.start();
+
+    avatarRef.current = createSimliAvatar({ simliClient, appSessionToken: token });
+  }, [token]);
+
+  const connectSpatius = useCallback(async () => {
+    const res = await fetch("/api/ai-test/spatius-session", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ token }),
+    });
+    const data = await res.json();
+    if (!res.ok) throw new Error(data.error ?? "Spatius session failed");
+
+    if (!spatiusContainerRef.current) throw new Error("Missing avatar container");
+
+    const avatarView = await connectSpatiusAvatar({
+      appId: data.app_id,
+      sessionToken: data.session_token,
+      avatarId: data.avatar_id,
+      container: spatiusContainerRef.current,
+    });
+
+    avatarRef.current = createSpatiusAvatar({ avatarView, appSessionToken: token });
+  }, [token]);
+
   const connectAvatar = useCallback(async () => {
     setConnectionState("connecting");
+    const provider = sessionDataRef.current?.avatarProvider ?? "simli";
     try {
-      const res = await fetch("/api/ai-test/simli-session", {
-        method: "POST",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ token }),
-      });
-      const data = await res.json();
-      if (!res.ok) throw new Error(data.error ?? "Simli session failed");
-
-      if (!videoRef.current || !audioRef.current) throw new Error("Missing media elements");
-
-      const simliClient = new SimliClient(
-        data.session_token,
-        videoRef.current,
-        audioRef.current,
-        data.ice_servers ?? null
-      );
-      await simliClient.start();
-
-      avatarRef.current = createSimliAvatar({ simliClient, appSessionToken: token });
+      if (provider === "spatius") {
+        await connectSpatius();
+      } else {
+        await connectSimli();
+      }
       setUsingFallbackAvatar(false);
       setConnectionState("connected");
     } catch (err) {
-      console.error("Simli connection failed, falling back to browser speech:", err);
+      console.error(`${provider} connection failed, falling back to browser speech:`, err);
       avatarRef.current = createBrowserAvatar();
       setUsingFallbackAvatar(true);
       setConnectionState("connected");
     }
-  }, [token]);
+  }, [connectSimli, connectSpatius]);
 
   useEffect(() => {
     if (phase === "before_start" && micChecked && !avatarRef.current) {
@@ -176,8 +231,30 @@ export default function AiTestRoomPage({
       stopSilenceWatchRef.current?.();
       if (autoStopTimerRef.current) clearTimeout(autoStopTimerRef.current);
       releaseMic();
+      releaseCamera();
     };
   }, []);
+
+  async function handleToggleCamera() {
+    if (cameraOn) {
+      releaseCamera();
+      if (selfViewRef.current) selfViewRef.current.srcObject = null;
+      setCameraOn(false);
+      return;
+    }
+
+    setIsTogglingCamera(true);
+    setCameraError(null);
+    try {
+      const stream = await getCameraStream();
+      if (selfViewRef.current) selfViewRef.current.srcObject = stream;
+      setCameraOn(true);
+    } catch {
+      setCameraError("Couldn't access your camera. Check your browser permissions.");
+    } finally {
+      setIsTogglingCamera(false);
+    }
+  }
 
   async function speak(text: string) {
     setAvatarStatus("speaking");
@@ -444,16 +521,72 @@ export default function AiTestRoomPage({
   return (
     <div className="flex min-h-screen flex-col bg-slate-950 lg:flex-row">
       <div className="relative flex h-[45vh] flex-col items-center justify-center bg-slate-900 lg:h-screen lg:w-[55%]">
+        {/* Self-view — a real video-call feel. This feed is local only: never
+            sent to the server or analyzed. */}
+        <div className="absolute right-4 top-4 z-10 flex flex-col items-end gap-2">
+          <div
+            className={cn(
+              "h-24 w-32 overflow-hidden rounded-lg border border-slate-700 bg-slate-800 shadow-lg sm:h-28 sm:w-36",
+              !cameraOn && "hidden"
+            )}
+          >
+            <video
+              ref={selfViewRef}
+              autoPlay
+              playsInline
+              muted
+              className="h-full w-full scale-x-[-1] object-cover"
+            />
+          </div>
+          <Button
+            size="sm"
+            variant="outline"
+            className="border-slate-700 bg-slate-800/90 text-slate-200 hover:bg-slate-700"
+            onClick={handleToggleCamera}
+            disabled={isTogglingCamera}
+          >
+            {isTogglingCamera ? (
+              <Loader2 className="h-3.5 w-3.5 animate-spin" />
+            ) : cameraOn ? (
+              <VideoOff className="h-3.5 w-3.5" />
+            ) : (
+              <Video className="h-3.5 w-3.5" />
+            )}
+            {cameraOn ? "Camera Off" : "Camera On"}
+          </Button>
+          {cameraError && (
+            <p className="max-w-[9rem] text-right text-[11px] text-error">{cameraError}</p>
+          )}
+        </div>
+
         <video
           ref={videoRef}
           autoPlay
           playsInline
           className={cn(
             "h-40 w-40 rounded-full object-cover sm:h-56 sm:w-56",
-            (usingFallbackAvatar || connectionState !== "connected") && "hidden"
+            (usingFallbackAvatar ||
+              connectionState !== "connected" ||
+              sessionData?.avatarProvider === "spatius") &&
+              "hidden"
           )}
         />
         <audio ref={audioRef} autoPlay className="hidden" />
+
+        {/* Spatius renders into this container itself (it creates its own
+            canvas), so it stays mounted from the start rather than being
+            conditionally rendered — connectSpatius needs the element to
+            already exist in the DOM once the mic check passes. */}
+        <div
+          ref={spatiusContainerRef}
+          className={cn(
+            "h-40 w-40 overflow-hidden rounded-full sm:h-56 sm:w-56",
+            (usingFallbackAvatar ||
+              connectionState !== "connected" ||
+              sessionData?.avatarProvider !== "spatius") &&
+              "hidden"
+          )}
+        />
 
         {(usingFallbackAvatar || connectionState !== "connected") && (
           <div className="flex h-40 w-40 items-center justify-center rounded-full bg-slate-800 sm:h-56 sm:w-56">

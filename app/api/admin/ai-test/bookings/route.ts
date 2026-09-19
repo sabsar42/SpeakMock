@@ -10,7 +10,7 @@ export async function GET() {
 
   const { data: bookings, error } = await supabase
     .from("ai_test_bookings")
-    .select("*, ai_test_sessions(token)")
+    .select("*, ai_test_sessions(token, avatar_provider)")
     .order("created_at", { ascending: false });
 
   if (error) {

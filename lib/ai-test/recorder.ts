@@ -51,3 +51,27 @@ export function releaseMic() {
   activeStream?.getTracks().forEach((t) => t.stop());
   activeStream = null;
 }
+
+let cameraStream: MediaStream | null = null;
+
+/**
+ * Requests the webcam for the student's own self-view only — this stream is
+ * never sent anywhere or analyzed, it's purely so the exam feels like a real
+ * video call. Kept entirely separate from the mic/recording pipeline so a
+ * camera failure (denied permission, no webcam, etc.) can never block the
+ * exam itself.
+ */
+export async function getCameraStream(): Promise<MediaStream> {
+  if (cameraStream && cameraStream.getTracks().some((t) => t.readyState === "live")) {
+    return cameraStream;
+  }
+  cameraStream = await navigator.mediaDevices.getUserMedia({
+    video: { width: 480, height: 360, facingMode: "user" },
+  });
+  return cameraStream;
+}
+
+export function releaseCamera() {
+  cameraStream?.getTracks().forEach((t) => t.stop());
+  cameraStream = null;
+}

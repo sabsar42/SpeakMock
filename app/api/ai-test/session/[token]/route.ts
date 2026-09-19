@@ -55,6 +55,7 @@ export async function GET(
   return NextResponse.json({
     studentName: booking?.student_name ?? "",
     phase: session.phase,
+    avatarProvider: session.avatar_provider,
     part1Questions: orderById(session.selected_part1_questions, part1Questions ?? []),
     part3Questions: orderById(session.selected_part3_questions, part3Questions ?? []),
     cueCard: cueCard ?? null,

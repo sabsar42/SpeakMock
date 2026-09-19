@@ -3,7 +3,9 @@ import { nanoid } from "nanoid";
 import { supabaseServer } from "@/lib/supabase/server";
 import { requireAdmin } from "@/lib/require-admin";
 import { sendAiTestApprovedEmail } from "@/lib/resend/emails";
-import type { AiTestBooking, CueCard, QuestionBankItem } from "@/lib/types";
+import type { AiTestBooking, AvatarProviderName, CueCard, QuestionBankItem } from "@/lib/types";
+
+const VALID_PROVIDERS: AvatarProviderName[] = ["simli", "spatius"];
 
 function pickRandom<T>(items: T[], count: number): T[] {
   const shuffled = [...items].sort(() => Math.random() - 0.5);
@@ -14,7 +16,7 @@ export async function POST(request: NextRequest) {
   const unauthorized = await requireAdmin();
   if (unauthorized) return unauthorized;
 
-  let body: { booking_id?: string };
+  let body: { booking_id?: string; avatar_provider?: string };
   try {
     body = await request.json();
   } catch {
@@ -24,6 +26,11 @@ export async function POST(request: NextRequest) {
   if (!body.booking_id) {
     return NextResponse.json({ error: "booking_id is required." }, { status: 400 });
   }
+
+  const avatarProvider: AvatarProviderName =
+    body.avatar_provider && VALID_PROVIDERS.includes(body.avatar_provider as AvatarProviderName)
+      ? (body.avatar_provider as AvatarProviderName)
+      : "simli";
 
   const supabase = supabaseServer();
 
@@ -109,6 +116,7 @@ export async function POST(request: NextRequest) {
   const { error: sessionError } = await supabase.from("ai_test_sessions").insert({
     booking_id: booking.id,
     token,
+    avatar_provider: avatarProvider,
     selected_part1_questions: selectedPart1,
     selected_cue_card_id: cueCard.id,
     selected_part3_questions: selectedPart3,

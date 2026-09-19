@@ -155,6 +155,13 @@ CREATE TABLE ai_test_sessions (
   booking_id UUID REFERENCES ai_test_bookings(id) ON DELETE CASCADE UNIQUE NOT NULL,
   token TEXT UNIQUE NOT NULL,
   simli_session_id TEXT,
+  -- Which real-time avatar backend this test uses. Chosen by the admin at
+  -- approval time (see /admin/ai-tests), frozen for the lifetime of the
+  -- session so switching the site-wide default never changes an in-progress
+  -- or already-approved test.
+  avatar_provider TEXT DEFAULT 'simli'
+    CHECK (avatar_provider IN ('simli', 'spatius')),
+  spatius_session_id TEXT,
   selected_part1_questions UUID[],
   selected_cue_card_id UUID,
   selected_part3_questions UUID[],
@@ -167,6 +174,14 @@ CREATE TABLE ai_test_sessions (
   is_deleted BOOLEAN DEFAULT FALSE,
   created_at TIMESTAMPTZ DEFAULT NOW()
 );
+```
+
+Migration for an existing database that already has this table:
+
+```sql
+ALTER TABLE ai_test_sessions ADD COLUMN avatar_provider TEXT DEFAULT 'simli'
+  CHECK (avatar_provider IN ('simli', 'spatius'));
+ALTER TABLE ai_test_sessions ADD COLUMN spatius_session_id TEXT;
 ```
 
 ### ai_test_results

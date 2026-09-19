@@ -10,6 +10,12 @@
 /.next/
 /out/
 
+# @spatius/avatarkit — copies its WASM binary and Opus workers into public/
+# on every `next dev`/`next build` (see withAvatarkit in next.config.mjs),
+# so these are build output, not source.
+/public/_avatarkit/
+/public/assets/
+
 # production
 /build
 
