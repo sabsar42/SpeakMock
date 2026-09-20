@@ -93,7 +93,7 @@ export default function HomePage() {
       <section className="relative overflow-hidden">
         <div className="absolute inset-0">
           <Image
-            src="/hero/desert-hero.webp"
+            src="/hero/autumn-hero.webp"
             alt=""
             fill
             priority
