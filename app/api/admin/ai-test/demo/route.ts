@@ -160,8 +160,12 @@ export async function POST(request: NextRequest) {
   });
 
   if (sessionError) {
+    console.error("Could not create demo session:", sessionError);
     await supabase.from("ai_test_bookings").delete().eq("id", booking.id);
-    return NextResponse.json({ error: "Could not create demo session." }, { status: 500 });
+    return NextResponse.json(
+      { error: "Could not create demo session.", detail: sessionError.message },
+      { status: 500 }
+    );
   }
 
   return NextResponse.json({ success: true, token, booking_id: booking.id, mode });

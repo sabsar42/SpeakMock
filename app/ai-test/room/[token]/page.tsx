@@ -5,12 +5,12 @@ import { SimliClient } from "simli-client";
 import {
   AlertTriangle,
   Bot,
+  Flag,
   Loader2,
   Mic,
   MicOff,
   RefreshCw,
   Video,
-  VideoOff,
   Volume2,
 } from "lucide-react";
 import { Button } from "@/components/ui/button";
@@ -62,6 +62,11 @@ interface SessionData {
   cueCard: CueCard | null;
 }
 
+/** The one caption line shown over the call — either the examiner's question
+ * (Part 1/3), the cue card prompt (Part 2), or null once the student is just
+ * expected to talk without a new prompt on screen. */
+type Caption = { label: string; text: string } | null;
+
 export default function AiTestRoomPage({
   params,
 }: {
@@ -78,8 +83,8 @@ export default function AiTestRoomPage({
   const autoStopTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
   const manualFinishRef = useRef<(() => void) | null>(null);
 
-  // Guards against a turn advancing twice — the silence watcher, the auto-stop
-  // timer, and the student's "I'm done speaking" button can all race.
+  // Guards against a turn advancing twice — the silence watcher and the
+  // part-2 time limit can both race to end the same turn.
   const turnSettledRef = useRef(false);
   const sessionDataRef = useRef<SessionData | null>(null);
   const part1IndexRef = useRef(0);
@@ -98,16 +103,25 @@ export default function AiTestRoomPage({
   const [micChecked, setMicChecked] = useState(false);
   const [isCheckingMic, setIsCheckingMic] = useState(false);
 
-  // Purely a self-view — this stream is never sent anywhere or analyzed, it
-  // just makes the exam feel like a real video call. Independent of the
-  // mic/recording pipeline so a camera failure can never block the exam.
+  // The camera feed is purely a self-view — never sent to the server or
+  // analyzed, it just makes this feel like the two-way video call a real
+  // IELTS speaking test is. It's required to begin (same as the mic check)
+  // since that's the whole point of the room, but its own failure is still
+  // isolated from the mic/recording pipeline: a camera problem is shown as
+  // its own checklist item rather than being able to corrupt the exam.
   const [cameraOn, setCameraOn] = useState(false);
   const [cameraError, setCameraError] = useState<string | null>(null);
-  const [isTogglingCamera, setIsTogglingCamera] = useState(false);
+  const [isCheckingCamera, setIsCheckingCamera] = useState(false);
 
   const [part1Index, setPart1Index] = useState(0);
   const [part3Index, setPart3Index] = useState(0);
   const [isRecording, setIsRecording] = useState(false);
+  // Shows a "still there?" nudge once silence has gone on for a few seconds,
+  // well before the turn actually ends — see detectSilence's warningMs/cutoffMs.
+  const [silenceWarning, setSilenceWarning] = useState(false);
+  // "Something's wrong" pauses the exam (no audio recorded, no timers
+  // running) and shows a small recovery panel instead of silently breaking.
+  const [flaggedIssue, setFlaggedIssue] = useState(false);
 
   const [prepSecondsLeft, setPrepSecondsLeft] = useState(PREP_SECONDS);
   const [speakingSecondsLeft, setSpeakingSecondsLeft] = useState(SPEAKING_SECONDS);
@@ -220,10 +234,10 @@ export default function AiTestRoomPage({
   }, [connectSimli, connectSpatius]);
 
   useEffect(() => {
-    if (phase === "before_start" && micChecked && !avatarRef.current) {
+    if (phase === "before_start" && micChecked && cameraOn && !avatarRef.current) {
       connectAvatar();
     }
-  }, [phase, micChecked, connectAvatar]);
+  }, [phase, micChecked, cameraOn, connectAvatar]);
 
   useEffect(() => {
     return () => {
@@ -235,15 +249,8 @@ export default function AiTestRoomPage({
     };
   }, []);
 
-  async function handleToggleCamera() {
-    if (cameraOn) {
-      releaseCamera();
-      if (selfViewRef.current) selfViewRef.current.srcObject = null;
-      setCameraOn(false);
-      return;
-    }
-
-    setIsTogglingCamera(true);
+  async function handleCheckCamera() {
+    setIsCheckingCamera(true);
     setCameraError(null);
     try {
       const stream = await getCameraStream();
@@ -252,7 +259,7 @@ export default function AiTestRoomPage({
     } catch {
       setCameraError("Couldn't access your camera. Check your browser permissions.");
     } finally {
-      setIsTogglingCamera(false);
+      setIsCheckingCamera(false);
     }
   }
 
@@ -284,9 +291,10 @@ export default function AiTestRoomPage({
   }
 
   /**
-   * Starts listening for the student's answer. The turn ends exactly once,
-   * whichever of silence detection / the time limit / the manual button fires
-   * first, then `onDone` advances the exam.
+   * Starts listening for the student's answer. Mostly automatic — silence
+   * detection (or, in Part 2, the time limit) ends the turn on its own — but
+   * "I'm done" lets the student end it early on purpose, since silence alone
+   * can't tell "finished early" from "still thinking".
    */
   async function listenForAnswer(
     part: 1 | 2 | 3,
@@ -300,6 +308,7 @@ export default function AiTestRoomPage({
       const stream = await startRecording();
       turnSettledRef.current = false;
       setIsRecording(true);
+      setSilenceWarning(false);
       setAvatarStatus("listening");
 
       const startedAt = Date.now();
@@ -317,6 +326,7 @@ export default function AiTestRoomPage({
           autoStopTimerRef.current = null;
         }
         manualFinishRef.current = null;
+        setSilenceWarning(false);
 
         await captureAnswer(part, questionId);
         onDone();
@@ -325,7 +335,10 @@ export default function AiTestRoomPage({
       manualFinishRef.current = () => void finish(true);
 
       if (useSilenceDetection) {
-        stopSilenceWatchRef.current = detectSilence(stream, () => void finish());
+        stopSilenceWatchRef.current = detectSilence(stream, {
+          onWarning: () => setSilenceWarning(true),
+          onSilence: () => void finish(),
+        });
       }
       if (autoStopMs) {
         autoStopTimerRef.current = setTimeout(() => void finish(true), autoStopMs);
@@ -427,13 +440,22 @@ export default function AiTestRoomPage({
     return () => clearTimeout(timer);
   }, [phase, prepSecondsLeft]);
 
+  // Prep time counts down on its own into the speaking turn — no button, to
+  // match a real examiner just starting to listen once the minute is up.
+  useEffect(() => {
+    if (phase === "part2_prep" && prepSecondsLeft === 0) {
+      startSpeakingPart2();
+    }
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [phase, prepSecondsLeft]);
+
   function startSpeakingPart2() {
     const data = sessionDataRef.current;
     if (!data?.cueCard) return;
     setPhase("part2_speaking");
     setSpeakingSecondsLeft(SPEAKING_SECONDS);
     // Part 2 is a sustained monologue where natural pauses are expected, so
-    // the 2-minute limit (or the manual button) ends the turn, not silence.
+    // the 2-minute limit ends the turn, not silence.
     listenForAnswer(2, data.cueCard.id, startPart3, {
       autoStopMs: SPEAKING_SECONDS * 1000,
       useSilenceDetection: false,
@@ -507,411 +529,380 @@ export default function AiTestRoomPage({
     return () => clearTimeout(timer);
   }, [phase, generatingStep]);
 
-  const statusLabel: Record<AvatarStatus, string> = {
-    idle: "Ready",
-    speaking: "Speaking...",
-    listening: "Listening...",
-    processing: "Processing...",
-  };
-
+  /** Voluntarily ends the current turn early, same as silence would. */
   function handleDoneSpeaking() {
     manualFinishRef.current?.();
   }
 
+  /**
+   * "Something's wrong" — e.g. the examiner moved on too early. Pauses the
+   * exam: stops recording/timers without saving a turn, so the student isn't
+   * scored on a cut-off answer, and shows a small recovery panel instead of
+   * silently breaking or losing progress.
+   */
+  function handleFlagIssue() {
+    if (turnSettledRef.current) return;
+    turnSettledRef.current = true;
+    stopSilenceWatchRef.current?.();
+    stopSilenceWatchRef.current = null;
+    if (autoStopTimerRef.current) {
+      clearTimeout(autoStopTimerRef.current);
+      autoStopTimerRef.current = null;
+    }
+    manualFinishRef.current = null;
+    setIsRecording(false);
+    setSilenceWarning(false);
+    void stopRecording(); // discard — this turn is being flagged, not scored
+    setFlaggedIssue(true);
+  }
+
+  /** Repeats the current question/prompt and resumes listening, same as if
+   * the turn had just started. */
+  function handleResumeFromFlag() {
+    setFlaggedIssue(false);
+    if (phase === "part1") {
+      const data = sessionDataRef.current;
+      const question = data?.part1Questions[part1IndexRef.current];
+      if (question) {
+        speak(question.question_text).then(() =>
+          listenForAnswer(1, question.id, advancePart1)
+        );
+      }
+    } else if (phase === "part2_speaking") {
+      startSpeakingPart2();
+    } else if (phase === "part3") {
+      const data = sessionDataRef.current;
+      const question = data?.part3Questions[part3IndexRef.current];
+      if (question) {
+        speak(question.question_text).then(() =>
+          listenForAnswer(3, question.id, advancePart3)
+        );
+      }
+    }
+  }
+
+  const inCall =
+    phase === "part1" || phase === "part2_prep" || phase === "part2_speaking" || phase === "part3";
+
+  const caption: Caption = (() => {
+    if (!sessionData) return null;
+    if (phase === "part1") {
+      return {
+        label: `Part 1 · Question ${part1Index + 1} of ${sessionData.part1Questions.length}`,
+        text: sessionData.part1Questions[part1Index].question_text,
+      };
+    }
+    if ((phase === "part2_prep" || phase === "part2_speaking") && sessionData.cueCard) {
+      return { label: "Part 2 · Cue Card", text: sessionData.cueCard.topic };
+    }
+    if (phase === "part3") {
+      return {
+        label: `Part 3 · Question ${part3Index + 1} of ${sessionData.part3Questions.length}`,
+        text: sessionData.part3Questions[part3Index].question_text,
+      };
+    }
+    return null;
+  })();
+
+  const showExaminerVideo =
+    phase !== "loading" &&
+    !usingFallbackAvatar &&
+    connectionState === "connected" &&
+    sessionData?.avatarProvider !== "spatius";
+  const showSpatiusView =
+    phase !== "loading" &&
+    !usingFallbackAvatar &&
+    connectionState === "connected" &&
+    sessionData?.avatarProvider === "spatius";
+  const showFallbackIcon =
+    phase !== "loading" && (usingFallbackAvatar || connectionState !== "connected");
+
+  // One tree, mounted for the whole page lifetime: the video/canvas/audio
+  // elements the avatar SDKs attach to must never unmount mid-call, so every
+  // phase is an overlay on top of the same call surface rather than a
+  // separate return per phase.
   return (
-    <div className="flex min-h-screen flex-col bg-slate-950 lg:flex-row">
-      <div className="relative flex h-[45vh] flex-col items-center justify-center bg-slate-900 lg:h-screen lg:w-[55%]">
-        {/* Self-view — a real video-call feel. This feed is local only: never
-            sent to the server or analyzed. */}
-        <div className="absolute right-4 top-4 z-10 flex flex-col items-end gap-2">
-          <div
-            className={cn(
-              "h-24 w-32 overflow-hidden rounded-lg border border-slate-700 bg-slate-800 shadow-lg sm:h-28 sm:w-36",
-              !cameraOn && "hidden"
-            )}
-          >
-            <video
-              ref={selfViewRef}
-              autoPlay
-              playsInline
-              muted
-              className="h-full w-full scale-x-[-1] object-cover"
-            />
-          </div>
-          <Button
-            size="sm"
-            variant="outline"
-            className="border-slate-700 bg-slate-800/90 text-slate-200 hover:bg-slate-700"
-            onClick={handleToggleCamera}
-            disabled={isTogglingCamera}
-          >
-            {isTogglingCamera ? (
-              <Loader2 className="h-3.5 w-3.5 animate-spin" />
-            ) : cameraOn ? (
-              <VideoOff className="h-3.5 w-3.5" />
-            ) : (
-              <Video className="h-3.5 w-3.5" />
-            )}
-            {cameraOn ? "Camera Off" : "Camera On"}
-          </Button>
-          {cameraError && (
-            <p className="max-w-[9rem] text-right text-[11px] text-error">{cameraError}</p>
+    <div className="relative min-h-screen overflow-hidden bg-slate-950">
+      <video
+        ref={videoRef}
+        autoPlay
+        playsInline
+        className={cn("h-screen w-full object-cover", !showExaminerVideo && "hidden")}
+      />
+      <audio ref={audioRef} autoPlay className="hidden" />
+
+      {/* Spatius renders into this container itself (it creates its own canvas). */}
+      <div ref={spatiusContainerRef} className={cn("h-screen w-full", !showSpatiusView && "hidden")} />
+
+      {showFallbackIcon && (
+        <div className="flex h-screen w-full items-center justify-center">
+          {connectionState === "connecting" ? (
+            <Loader2 className="h-10 w-10 animate-spin text-slate-600" />
+          ) : (
+            <Bot className="h-28 w-28 text-slate-600" />
           )}
         </div>
+      )}
 
+      {/* Self-view, like the picture-in-picture tile on any real video call.
+          Mounted once here (not re-created per phase) so the same <video>
+          element serves both the camera-check preview and the in-call tile —
+          it just stays anchored to this same corner throughout. */}
+      <div
+        className={cn(
+          "absolute bottom-4 right-4 h-28 w-40 overflow-hidden rounded-xl border border-slate-700 bg-slate-900 shadow-2xl sm:h-36 sm:w-52",
+          !cameraOn && "hidden"
+        )}
+      >
         <video
-          ref={videoRef}
+          ref={selfViewRef}
           autoPlay
           playsInline
-          className={cn(
-            "h-40 w-40 rounded-full object-cover sm:h-56 sm:w-56",
-            (usingFallbackAvatar ||
-              connectionState !== "connected" ||
-              sessionData?.avatarProvider === "spatius") &&
-              "hidden"
-          )}
+          muted
+          className="h-full w-full scale-x-[-1] object-cover"
         />
-        <audio ref={audioRef} autoPlay className="hidden" />
-
-        {/* Spatius renders into this container itself (it creates its own
-            canvas), so it stays mounted from the start rather than being
-            conditionally rendered — connectSpatius needs the element to
-            already exist in the DOM once the mic check passes. */}
-        <div
-          ref={spatiusContainerRef}
-          className={cn(
-            "h-40 w-40 overflow-hidden rounded-full sm:h-56 sm:w-56",
-            (usingFallbackAvatar ||
-              connectionState !== "connected" ||
-              sessionData?.avatarProvider !== "spatius") &&
-              "hidden"
-          )}
-        />
-
-        {(usingFallbackAvatar || connectionState !== "connected") && (
-          <div className="flex h-40 w-40 items-center justify-center rounded-full bg-slate-800 sm:h-56 sm:w-56">
-            {connectionState === "connecting" ? (
-              <Loader2 className="h-10 w-10 animate-spin text-slate-500" />
-            ) : (
-              <Bot className="h-20 w-20 text-slate-500 sm:h-28 sm:w-28" />
-            )}
-          </div>
-        )}
-
-        <p className="mt-4 text-sm font-medium text-slate-400">{AVATAR_NAME}</p>
-        <div className="mt-3 flex items-center gap-2 rounded-full border border-slate-700 bg-slate-800 px-3.5 py-1.5 text-xs font-medium text-slate-300">
-          {avatarStatus === "speaking" && <Volume2 className="h-3.5 w-3.5 text-accent" />}
-          {avatarStatus === "listening" && <Mic className="h-3.5 w-3.5 text-success animate-pulse" />}
-          {avatarStatus === "processing" && <Loader2 className="h-3.5 w-3.5 animate-spin" />}
-          {statusLabel[avatarStatus]}
-        </div>
-        {avatarStatus === "listening" && (
-          <div className="mt-4 flex items-end gap-1">
-            {[0, 1, 2, 3, 4].map((i) => (
-              <span
-                key={i}
-                className="w-1.5 animate-pulse rounded-full bg-success"
-                style={{ height: `${8 + ((i * 7) % 20)}px`, animationDelay: `${i * 120}ms` }}
-              />
-            ))}
-          </div>
-        )}
-        {usingFallbackAvatar && connectionState === "connected" && (
-          <p className="mt-3 max-w-xs text-center text-xs text-slate-500">
-            Video avatar unavailable — continuing with audio only. Your test is
-            unaffected.
-          </p>
+        {isRecording && (
+          <span className="absolute left-2 top-2 flex h-2.5 w-2.5">
+            <span className="absolute inline-flex h-full w-full animate-ping rounded-full bg-error opacity-75" />
+            <span className="relative inline-flex h-2.5 w-2.5 rounded-full bg-error" />
+          </span>
         )}
       </div>
 
-      <div className="flex flex-1 flex-col bg-white px-4 py-8 sm:px-8 lg:w-[45%] lg:overflow-y-auto">
-        {phase === "loading" && (
-          <div className="flex flex-1 items-center justify-center">
-            <Loader2 className="h-6 w-6 animate-spin text-primary" />
-          </div>
-        )}
+      {phase === "loading" && (
+        <div className="absolute inset-0 flex items-center justify-center bg-slate-950">
+          <Loader2 className="h-6 w-6 animate-spin text-slate-500" />
+        </div>
+      )}
 
-        {phase === "error" && (
-          <div className="mx-auto flex max-w-md flex-1 flex-col items-center justify-center text-center">
-            <AlertTriangle className="h-8 w-8 text-error" />
-            <p className="mt-4 text-text-secondary">{loadError}</p>
-            <Button variant="outline" className="mt-6" onClick={() => window.location.reload()}>
-              <RefreshCw className="h-4 w-4" />
-              Try Again
-            </Button>
-          </div>
-        )}
+      {phase === "error" && (
+        <div className="absolute inset-0 flex flex-col items-center justify-center bg-slate-950 px-4 text-center">
+          <AlertTriangle className="h-8 w-8 text-error" />
+          <p className="mt-4 max-w-md text-slate-300">{loadError}</p>
+          <Button variant="outline" className="mt-6" onClick={() => window.location.reload()}>
+            <RefreshCw className="h-4 w-4" />
+            Try Again
+          </Button>
+        </div>
+      )}
 
-        {phase === "before_start" && sessionData && (
-          <div className="mx-auto flex max-w-md flex-1 flex-col justify-center">
-            <h1 className="text-2xl font-bold text-text-primary">
-              Welcome, {sessionData.studentName}
-            </h1>
-            <p className="mt-2 text-text-secondary">
-              You&apos;re about to take a ~15 minute IELTS speaking test with{" "}
-              {AVATAR_NAME}, your AI examiner.
+      {phase === "before_start" && sessionData && (
+        <div className="absolute inset-0 flex items-center justify-center overflow-y-auto bg-slate-950 px-4 py-10">
+          <div className="w-full max-w-md">
+            <h1 className="text-2xl font-bold text-white">Welcome, {sessionData.studentName}</h1>
+            <p className="mt-2 text-slate-400">
+              You&apos;re about to take a ~15 minute IELTS speaking test with {AVATAR_NAME}, your
+              AI examiner — a live video call, just like the real exam.
             </p>
 
             {browserCheck === "unsupported" && (
-              <div className="mt-5 flex items-start gap-2.5 rounded-lg border border-amber-200 bg-amber-50 px-4 py-3 text-sm text-amber-800">
+              <div className="mt-5 flex items-start gap-2.5 rounded-lg border border-amber-800 bg-amber-950/50 px-4 py-3 text-sm text-amber-300">
                 <AlertTriangle className="mt-0.5 h-4 w-4 shrink-0" />
-                <p>
-                  For the best experience, please use Chrome or Edge. Your
-                  current browser may not support all features.
-                </p>
+                <p>For the best experience, please use Chrome or Edge.</p>
               </div>
             )}
 
-            <div className="mt-6 rounded-xl border border-border bg-gray-50 p-5">
-              <p className="text-sm font-medium text-text-primary">Microphone Check</p>
-              <p className="mt-1 text-sm text-text-secondary">
-                We need to confirm your microphone is working before you begin.
-              </p>
-              {micError && <p className="mt-3 text-sm text-error">{micError}</p>}
-              <Button
-                variant={micChecked ? "secondary" : "primary"}
-                className="mt-4 w-full"
-                onClick={handleCheckMic}
-                disabled={isCheckingMic}
-              >
-                {isCheckingMic ? (
-                  <Loader2 className="h-4 w-4 animate-spin" />
-                ) : micChecked ? (
-                  <Mic className="h-4 w-4" />
-                ) : (
-                  <MicOff className="h-4 w-4" />
-                )}
-                {micChecked ? "Microphone Working" : "Test My Microphone"}
-              </Button>
+            <div className="mt-6 space-y-3">
+              <div className="rounded-xl border border-slate-800 bg-slate-900 p-5">
+                <p className="text-sm font-medium text-white">Microphone Check</p>
+                <p className="mt-1 text-sm text-slate-400">
+                  We need to confirm your microphone is working before you begin.
+                </p>
+                {micError && <p className="mt-3 text-sm text-error">{micError}</p>}
+                <Button
+                  variant={micChecked ? "secondary" : "primary"}
+                  className="mt-4 w-full"
+                  onClick={handleCheckMic}
+                  disabled={isCheckingMic}
+                >
+                  {isCheckingMic ? (
+                    <Loader2 className="h-4 w-4 animate-spin" />
+                  ) : micChecked ? (
+                    <Mic className="h-4 w-4" />
+                  ) : (
+                    <MicOff className="h-4 w-4" />
+                  )}
+                  {micChecked ? "Microphone Working" : "Test My Microphone"}
+                </Button>
+              </div>
+
+              <div className="rounded-xl border border-slate-800 bg-slate-900 p-5">
+                <p className="text-sm font-medium text-white">Camera Check</p>
+                <p className="mt-1 text-sm text-slate-400">
+                  This is a real video call — the examiner needs to see you, so your camera must
+                  be on to begin. Your feed is never recorded or sent anywhere else.
+                </p>
+                {/* The self-view preview appears in the corner PiP tile once
+                    the camera is on — see the fixed corner tile above. */}
+                {cameraError && <p className="mt-3 text-sm text-error">{cameraError}</p>}
+                <Button
+                  variant={cameraOn ? "secondary" : "primary"}
+                  className="mt-4 w-full"
+                  onClick={handleCheckCamera}
+                  disabled={isCheckingCamera || cameraOn}
+                >
+                  {isCheckingCamera ? (
+                    <Loader2 className="h-4 w-4 animate-spin" />
+                  ) : (
+                    <Video className="h-4 w-4" />
+                  )}
+                  {cameraOn ? "Camera Working" : "Turn On Camera"}
+                </Button>
+              </div>
             </div>
 
             <Button
               size="lg"
               variant="accent"
               className="mt-6 w-full"
-              disabled={!micChecked || connectionState !== "connected"}
+              disabled={!micChecked || !cameraOn || connectionState !== "connected"}
               onClick={handleBeginTest}
             >
-              {micChecked && connectionState === "connecting" && (
+              {micChecked && cameraOn && connectionState === "connecting" && (
                 <Loader2 className="h-4 w-4 animate-spin" />
               )}
-              {micChecked && connectionState === "connecting"
+              {micChecked && cameraOn && connectionState === "connecting"
                 ? "Connecting to your examiner..."
                 : "Begin Test"}
             </Button>
-            <p className="mt-3 text-center text-xs text-text-muted">~15 minutes</p>
+            <p className="mt-3 text-center text-xs text-slate-500">~15 minutes</p>
           </div>
-        )}
+        </div>
+      )}
 
-        {phase === "part1" && sessionData && (
-          <div className="mx-auto flex w-full max-w-md flex-1 flex-col justify-center">
-            <span className="w-fit rounded-full bg-primary-light px-3 py-1 text-xs font-semibold uppercase tracking-wide text-primary">
-              Part 1 — Introduction
-            </span>
-            <p className="mt-3 text-xs font-medium uppercase tracking-wide text-text-muted">
-              Question {part1Index + 1} of {sessionData.part1Questions.length}
-            </p>
-            <p className="mt-2 text-xl font-semibold text-text-primary">
-              {sessionData.part1Questions[part1Index].question_text}
-            </p>
-
-            <RecordingIndicator isRecording={isRecording} avatarStatus={avatarStatus} />
-
-            <Button
-              variant="ghost"
-              size="sm"
-              className="mt-6 self-center text-text-muted"
-              disabled={!isRecording}
-              onClick={handleDoneSpeaking}
-            >
-              I&apos;m done speaking
-            </Button>
+      {inCall && (
+        <>
+          {/* Top-left: who you're talking to, plus a live status pill. */}
+          <div className="absolute left-4 top-4 flex items-center gap-2 rounded-full bg-black/40 px-3.5 py-1.5 text-sm font-medium text-white backdrop-blur">
+            <span>{AVATAR_NAME}</span>
+            {avatarStatus === "speaking" && <Volume2 className="h-3.5 w-3.5 text-accent" />}
+            {avatarStatus === "listening" && (
+              <span className="relative flex h-2 w-2">
+                <span className="absolute inline-flex h-full w-full animate-ping rounded-full bg-success opacity-75" />
+                <span className="relative inline-flex h-2 w-2 rounded-full bg-success" />
+              </span>
+            )}
+            {avatarStatus === "processing" && <Loader2 className="h-3.5 w-3.5 animate-spin" />}
           </div>
-        )}
 
-        {phase === "part2_prep" && sessionData?.cueCard && (
-          <div className="mx-auto flex w-full max-w-md flex-1 flex-col justify-center">
-            <span className="w-fit rounded-full bg-primary-light px-3 py-1 text-xs font-semibold uppercase tracking-wide text-primary">
-              Part 2 — Long Turn
-            </span>
-            <div className="mt-4 rounded-xl border border-border bg-gray-50 p-5">
-              <h3 className="text-lg font-semibold text-text-primary">
-                {sessionData.cueCard.topic}
-              </h3>
-              <ul className="mt-3 list-disc space-y-1.5 pl-5 text-sm text-text-secondary">
-                {sessionData.cueCard.bullet_points.map((point) => (
-                  <li key={point}>{point}</li>
-                ))}
-              </ul>
-              <p className="mt-3 text-sm font-medium text-text-muted">
-                {sessionData.cueCard.closing_prompt}
-              </p>
+          {/* Top-right: Part 2 timers, when relevant. */}
+          {phase === "part2_prep" && (
+            <div className="absolute right-4 top-4 rounded-full bg-black/40 px-3.5 py-1.5 text-sm font-semibold tabular-nums text-white backdrop-blur">
+              Prep: 0:{prepSecondsLeft.toString().padStart(2, "0")}
             </div>
-
-            <div className="mt-6 text-center">
-              <p className="text-xs font-medium uppercase tracking-wide text-text-muted">
-                Preparation Time
-              </p>
-              <p
-                className={cn(
-                  "mt-1 text-5xl font-bold tabular-nums",
-                  prepSecondsLeft <= 10 ? "text-accent" : "text-text-primary"
-                )}
-              >
-                0:{prepSecondsLeft.toString().padStart(2, "0")}
-              </p>
-            </div>
-
-            <Button
-              size="lg"
-              variant="accent"
-              className="mt-6 w-full"
-              onClick={startSpeakingPart2}
-            >
-              {prepSecondsLeft > 0 ? "Skip Prep & Start Speaking" : "Start Speaking"}
-            </Button>
-          </div>
-        )}
-
-        {phase === "part2_speaking" && sessionData?.cueCard && (
-          <div className="mx-auto flex w-full max-w-md flex-1 flex-col justify-center">
-            <span className="w-fit rounded-full bg-primary-light px-3 py-1 text-xs font-semibold uppercase tracking-wide text-primary">
-              Part 2 — Long Turn
-            </span>
-            <h3 className="mt-3 text-lg font-semibold text-text-primary">
-              {sessionData.cueCard.topic}
-            </h3>
-            <ul className="mt-3 list-disc space-y-1 pl-5 text-sm text-text-secondary">
-              {sessionData.cueCard.bullet_points.map((point) => (
-                <li key={point}>{point}</li>
-              ))}
-            </ul>
-
-            <div className="mt-6 h-2 w-full overflow-hidden rounded-full bg-gray-200">
-              <div
-                className="h-full rounded-full bg-primary transition-all duration-1000"
-                style={{
-                  width: `${((SPEAKING_SECONDS - speakingSecondsLeft) / SPEAKING_SECONDS) * 100}%`,
-                }}
-              />
-            </div>
-            <p className="mt-2 text-center text-sm text-text-muted">
+          )}
+          {phase === "part2_speaking" && (
+            <div className="absolute right-4 top-4 rounded-full bg-black/40 px-3.5 py-1.5 text-sm font-semibold tabular-nums text-white backdrop-blur">
               {Math.floor(speakingSecondsLeft / 60)}:
               {(speakingSecondsLeft % 60).toString().padStart(2, "0")} remaining
-            </p>
-
-            <RecordingIndicator isRecording={isRecording} avatarStatus={avatarStatus} />
-
-            <Button
-              variant="ghost"
-              size="sm"
-              className="mt-6 self-center text-text-muted"
-              disabled={!isRecording}
-              onClick={handleDoneSpeaking}
-            >
-              I&apos;m done speaking
-            </Button>
-          </div>
-        )}
-
-        {phase === "part3" && sessionData && (
-          <div className="mx-auto flex w-full max-w-md flex-1 flex-col justify-center">
-            <span className="w-fit rounded-full bg-primary-light px-3 py-1 text-xs font-semibold uppercase tracking-wide text-primary">
-              Part 3 — Discussion
-            </span>
-            <p className="mt-3 text-xs font-medium uppercase tracking-wide text-text-muted">
-              Question {part3Index + 1} of {sessionData.part3Questions.length}
-            </p>
-            <p className="mt-2 text-xl font-semibold text-text-primary">
-              {sessionData.part3Questions[part3Index].question_text}
-            </p>
-
-            <RecordingIndicator isRecording={isRecording} avatarStatus={avatarStatus} />
-
-            <Button
-              variant="ghost"
-              size="sm"
-              className="mt-6 self-center text-text-muted"
-              disabled={!isRecording}
-              onClick={handleDoneSpeaking}
-            >
-              I&apos;m done speaking
-            </Button>
-          </div>
-        )}
-
-        {(phase === "generating" || phase === "done") && (
-          <div className="mx-auto flex w-full max-w-md flex-1 flex-col items-center justify-center text-center">
-            <Loader2 className="h-10 w-10 animate-spin text-primary" />
-            <h2 className="mt-5 text-xl font-semibold text-text-primary">
-              Generating your results...
-            </h2>
-            <div className="mt-5 space-y-2 text-sm">
-              {["Scoring answers...", "Writing feedback...", "Creating your PDF..."].map(
-                (label, i) => (
-                  <p
-                    key={label}
-                    className={cn(
-                      "transition-colors",
-                      i < generatingStep
-                        ? "text-success"
-                        : i === generatingStep
-                          ? "font-medium text-text-primary"
-                          : "text-text-muted"
-                    )}
-                  >
-                    {label}
-                  </p>
-                )
-              )}
             </div>
-            <p className="mt-5 text-xs text-text-muted">
-              This can take up to a minute. Please keep this page open.
-            </p>
+          )}
+
+          {/* A quiet "still there?" nudge once silence has gone on a few
+              seconds — well before the turn actually ends, so pausing to
+              think never feels risky. */}
+          {silenceWarning && isRecording && (
+            <div className="absolute left-1/2 top-16 -translate-x-1/2 rounded-full border border-accent/40 bg-accent-light/90 px-3.5 py-1.5 text-xs font-medium text-accent-dark shadow backdrop-blur">
+              Still there? Keep speaking, or press &ldquo;I&apos;m done&rdquo; below.
+            </div>
+          )}
+
+          {/* Caption bar: the current question/cue card, like a subtitle. */}
+          {caption && (
+            <div className="absolute inset-x-0 bottom-20 flex justify-center px-4 sm:bottom-24">
+              <div className="max-w-xl rounded-2xl bg-black/55 px-5 py-3.5 text-center backdrop-blur">
+                <p className="text-[11px] font-semibold uppercase tracking-wide text-slate-300">
+                  {caption.label}
+                </p>
+                <p className="mt-1 text-base font-medium text-white sm:text-lg">{caption.text}</p>
+                {phase === "part2_speaking" && (
+                  <p className="mt-2 text-xs text-slate-300">
+                    Speak for up to 2 minutes — I&apos;ll let you know when we move on.
+                  </p>
+                )}
+              </div>
+            </div>
+          )}
+
+          {/* Manual controls: silence normally ends the turn on its own, but
+              these let the student end early on purpose or flag a problem
+              (e.g. the examiner moved on wrongly) instead of being stuck. */}
+          <div className="absolute inset-x-0 bottom-4 flex justify-center gap-2 px-4">
+            <Button
+              size="sm"
+              variant="secondary"
+              className="bg-white/90 text-slate-900 hover:bg-white"
+              disabled={!isRecording}
+              onClick={handleDoneSpeaking}
+            >
+              <Mic className="h-3.5 w-3.5" />
+              I&apos;m done
+            </Button>
+            <Button
+              size="sm"
+              variant="outline"
+              className="border-white/30 bg-black/40 text-white backdrop-blur hover:bg-black/60"
+              onClick={handleFlagIssue}
+            >
+              <Flag className="h-3.5 w-3.5" />
+              Something&apos;s wrong
+            </Button>
           </div>
-        )}
-      </div>
-    </div>
-  );
-}
 
-function RecordingIndicator({
-  isRecording,
-  avatarStatus,
-}: {
-  isRecording: boolean;
-  avatarStatus: AvatarStatus;
-}) {
-  const label = isRecording
-    ? "Recording your answer..."
-    : avatarStatus === "speaking"
-      ? "Listen to the question..."
-      : avatarStatus === "processing"
-        ? "Processing your answer..."
-        : "Preparing microphone...";
+          {micError && (
+            <div className="absolute inset-x-0 bottom-24 flex justify-center px-4">
+              <p className="rounded-lg bg-red-950/80 px-4 py-2 text-sm text-error backdrop-blur">
+                {micError}
+              </p>
+            </div>
+          )}
 
-  return (
-    <div
-      className={cn(
-        "mt-6 flex items-center justify-center gap-2 rounded-xl border-2 border-dashed px-5 py-6 text-sm font-medium",
-        isRecording
-          ? "border-error bg-red-50 text-error"
-          : "border-border bg-gray-50 text-text-secondary"
+          {flaggedIssue && (
+            <div className="absolute inset-0 flex items-center justify-center bg-black/70 px-4 backdrop-blur-sm">
+              <div className="w-full max-w-sm rounded-2xl bg-white p-6 text-center shadow-2xl">
+                <Flag className="mx-auto h-8 w-8 text-accent" />
+                <h3 className="mt-3 text-lg font-semibold text-text-primary">Test paused</h3>
+                <p className="mt-1.5 text-sm text-text-secondary">
+                  No worries — nothing was lost. Press below and {AVATAR_NAME} will repeat the
+                  current question so you can answer it properly.
+                </p>
+                <Button className="mt-5 w-full" onClick={handleResumeFromFlag}>
+                  Repeat the Question
+                </Button>
+              </div>
+            </div>
+          )}
+        </>
       )}
-    >
-      {isRecording ? (
-        <span className="relative flex h-2.5 w-2.5">
-          <span className="absolute inline-flex h-full w-full animate-ping rounded-full bg-error opacity-75" />
-          <span className="relative inline-flex h-2.5 w-2.5 rounded-full bg-error" />
-        </span>
-      ) : avatarStatus === "speaking" ? (
-        <Volume2 className="h-4 w-4" />
-      ) : avatarStatus === "processing" ? (
-        <Loader2 className="h-4 w-4 animate-spin" />
-      ) : (
-        <Mic className="h-4 w-4" />
+
+      {(phase === "generating" || phase === "done") && (
+        <div className="absolute inset-0 flex flex-col items-center justify-center bg-slate-950/95 px-4 text-center">
+          <Loader2 className="h-10 w-10 animate-spin text-primary" />
+          <h2 className="mt-5 text-xl font-semibold text-white">Generating your results...</h2>
+          <div className="mt-5 space-y-2 text-sm">
+            {["Scoring answers...", "Writing feedback...", "Creating your PDF..."].map(
+              (label, i) => (
+                <p
+                  key={label}
+                  className={cn(
+                    "transition-colors",
+                    i < generatingStep
+                      ? "text-success"
+                      : i === generatingStep
+                        ? "font-medium text-white"
+                        : "text-slate-500"
+                  )}
+                >
+                  {label}
+                </p>
+              )
+            )}
+          </div>
+          <p className="mt-5 text-xs text-slate-500">
+            This can take up to a minute. Please keep this page open.
+          </p>
+        </div>
       )}
-      {label}
     </div>
   );
 }

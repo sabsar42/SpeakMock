@@ -35,20 +35,20 @@
   box-shadow: none !important;
 }
 .fc .fc-button-primary:not(:disabled).fc-button-active {
-  background-color: #c25c15;
-  border-color: #c25c15;
+  background-color: #9f1239;
+  border-color: #9f1239;
 }
 .fc .fc-toolbar-title {
   font-size: 1rem;
   font-weight: 600;
 }
 .fc .fc-day-today {
-  background: rgba(194, 92, 21, 0.08) !important;
+  background: rgba(159, 18, 57, 0.08) !important;
 }
 .fc .fc-event {
   border-radius: 6px;
   cursor: pointer;
 }
 .fc .fc-timegrid-now-indicator-line {
-  border-color: #c25c15;
+  border-color: #9f1239;
 }

@@ -136,8 +136,10 @@ export function createSpatiusAvatar({
       await finished;
     },
     stop: () => controller.interrupt(),
+    // avatarView.dispose() already closes its AvatarController internally
+    // (per its own docs) — calling controller.close() first as well throws
+    // "Cannot close a closed AudioContext" on teardown.
     destroy: () => {
-      controller.close();
       avatarView.dispose();
       AvatarSDK.cleanup();
     },

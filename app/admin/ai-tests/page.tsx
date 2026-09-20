@@ -169,7 +169,11 @@ export default function AdminAiTestsPage() {
         body: JSON.stringify({ mode: "empty", avatar_provider: demoProvider }),
       });
       const data = await res.json();
-      if (!res.ok) throw new Error(data.error ?? "Could not create the demo test.");
+      if (!res.ok) {
+        throw new Error(
+          data.detail ? `${data.error} (${data.detail})` : data.error ?? "Could not create the demo test."
+        );
+      }
       await loadBookings();
       window.open(`/ai-test/room/${data.token}`, "_blank", "noopener");
     } catch (err) {
