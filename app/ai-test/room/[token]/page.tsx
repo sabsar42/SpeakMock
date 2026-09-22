@@ -30,7 +30,7 @@ import {
   startRecording,
   stopRecording,
 } from "@/lib/ai-test/recorder";
-import { detectSilence } from "@/lib/ai-test/silence";
+import { detectSilence, watchMicLevel } from "@/lib/ai-test/silence";
 import type { AvatarProviderName, CueCard, QuestionBankItem } from "@/lib/types";
 
 const AVATAR_NAME = process.env.NEXT_PUBLIC_AVATAR_NAME ?? "Rami";
@@ -102,6 +102,15 @@ export default function AiTestRoomPage({
   const [micError, setMicError] = useState<string | null>(null);
   const [micChecked, setMicChecked] = useState(false);
   const [isCheckingMic, setIsCheckingMic] = useState(false);
+  // Live level meter during the mic check — proves sound is actually
+  // reaching the selected input device, not just that permission was
+  // granted. A stream from the wrong/disconnected input device passes
+  // getUserMedia() fine but stays silent the whole test, which is what
+  // makes every real answer transcribe as Whisper's stock hallucination
+  // on silence instead of an actual transcription failure.
+  const [micLevel, setMicLevel] = useState(0);
+  const [micHeardSound, setMicHeardSound] = useState(false);
+  const stopMicLevelWatchRef = useRef<(() => void) | null>(null);
 
   // The camera feed is purely a self-view — never sent to the server or
   // analyzed, it just makes this feel like the two-way video call a real
@@ -243,11 +252,22 @@ export default function AiTestRoomPage({
     return () => {
       avatarRef.current?.destroy();
       stopSilenceWatchRef.current?.();
+      stopMicLevelWatchRef.current?.();
       if (autoStopTimerRef.current) clearTimeout(autoStopTimerRef.current);
       releaseMic();
       releaseCamera();
     };
   }, []);
+
+  // The level meter is only needed for the pre-test check — stop it once
+  // the exam actually starts so it isn't fighting detectSilence for the
+  // same AudioContext/analyser during real turns.
+  useEffect(() => {
+    if (phase !== "before_start" && stopMicLevelWatchRef.current) {
+      stopMicLevelWatchRef.current();
+      stopMicLevelWatchRef.current = null;
+    }
+  }, [phase]);
 
   async function handleCheckCamera() {
     setIsCheckingCamera(true);
@@ -366,8 +386,15 @@ export default function AiTestRoomPage({
       formData.append("token", token);
       const res = await fetch("/api/ai-test/transcribe", { method: "POST", body: formData });
       const data = await res.json();
-      const text =
-        res.ok && data.text?.trim() ? data.text : "(Could not transcribe this answer.)";
+      // An empty string (as opposed to a failed request) means the audio was
+      // processed fine but no real speech was detected in it — distinct from
+      // an actual transcription failure, so the scorer isn't misled into
+      // thinking something went wrong when the student just didn't answer.
+      const text = !res.ok
+        ? "(Could not transcribe this answer.)"
+        : data.text?.trim()
+          ? data.text
+          : "(No speech was detected in this answer.)";
       await saveTurn("student", text, part, questionId);
     } catch (err) {
       console.error("Transcription failed:", err);
@@ -375,12 +402,23 @@ export default function AiTestRoomPage({
     }
   }
 
+  // Level at which the live meter counts as "we heard you" — well below
+  // normal speaking volume so it fires quickly, but well above the noise
+  // floor of an open mic in a quiet room.
+  const MIC_HEARD_THRESHOLD = 0.08;
+
   async function handleCheckMic() {
     setIsCheckingMic(true);
     setMicError(null);
+    setMicHeardSound(false);
     try {
-      await getMicStream();
+      const stream = await getMicStream();
       setMicChecked(true);
+      stopMicLevelWatchRef.current?.();
+      stopMicLevelWatchRef.current = watchMicLevel(stream, (level) => {
+        setMicLevel(level);
+        if (level > MIC_HEARD_THRESHOLD) setMicHeardSound(true);
+      });
     } catch {
       setMicError(
         "We couldn't access your microphone. Please allow microphone permission in your browser settings and try again."
@@ -621,28 +659,35 @@ export default function AiTestRoomPage({
   // elements the avatar SDKs attach to must never unmount mid-call, so every
   // phase is an overlay on top of the same call surface rather than a
   // separate return per phase.
+  //
+  // The examiner's feed is a tightly-cropped face (Simli/Spatius both render
+  // a close-up), so filling the entire viewport with it — the original
+  // "full-bleed video call" version — blew the face up far too large.
+  // Contained to a centered panel instead, like an actual video-call window.
   return (
-    <div className="relative min-h-screen overflow-hidden bg-slate-950">
-      <video
-        ref={videoRef}
-        autoPlay
-        playsInline
-        className={cn("h-screen w-full object-cover", !showExaminerVideo && "hidden")}
-      />
-      <audio ref={audioRef} autoPlay className="hidden" />
+    <div className="relative flex min-h-screen items-center justify-center overflow-hidden bg-slate-950">
+      <div className="relative h-[70vh] w-full max-w-2xl overflow-hidden rounded-2xl bg-slate-900 sm:h-[75vh]">
+        <video
+          ref={videoRef}
+          autoPlay
+          playsInline
+          className={cn("h-full w-full object-cover", !showExaminerVideo && "hidden")}
+        />
+        <audio ref={audioRef} autoPlay className="hidden" />
 
-      {/* Spatius renders into this container itself (it creates its own canvas). */}
-      <div ref={spatiusContainerRef} className={cn("h-screen w-full", !showSpatiusView && "hidden")} />
+        {/* Spatius renders into this container itself (it creates its own canvas). */}
+        <div ref={spatiusContainerRef} className={cn("h-full w-full", !showSpatiusView && "hidden")} />
 
-      {showFallbackIcon && (
-        <div className="flex h-screen w-full items-center justify-center">
-          {connectionState === "connecting" ? (
-            <Loader2 className="h-10 w-10 animate-spin text-slate-600" />
-          ) : (
-            <Bot className="h-28 w-28 text-slate-600" />
-          )}
-        </div>
-      )}
+        {showFallbackIcon && (
+          <div className="flex h-full w-full items-center justify-center">
+            {connectionState === "connecting" ? (
+              <Loader2 className="h-10 w-10 animate-spin text-slate-600" />
+            ) : (
+              <Bot className="h-28 w-28 text-slate-600" />
+            )}
+          </div>
+        )}
+      </div>
 
       {/* Self-view, like the picture-in-picture tile on any real video call.
           Mounted once here (not re-created per phase) so the same <video>
@@ -706,23 +751,40 @@ export default function AiTestRoomPage({
               <div className="rounded-xl border border-slate-800 bg-slate-900 p-5">
                 <p className="text-sm font-medium text-white">Microphone Check</p>
                 <p className="mt-1 text-sm text-slate-400">
-                  We need to confirm your microphone is working before you begin.
+                  {micChecked
+                    ? "Say something out loud — we need to see the level move before you begin."
+                    : "We need to confirm your microphone is working before you begin."}
                 </p>
                 {micError && <p className="mt-3 text-sm text-error">{micError}</p>}
+                {micChecked && (
+                  <div className="mt-3 h-2 w-full overflow-hidden rounded-full bg-slate-800">
+                    <div
+                      className={cn(
+                        "h-full rounded-full transition-all duration-100",
+                        micHeardSound ? "bg-success" : "bg-accent"
+                      )}
+                      style={{ width: `${Math.max(4, micLevel * 100)}%` }}
+                    />
+                  </div>
+                )}
                 <Button
-                  variant={micChecked ? "secondary" : "primary"}
+                  variant={micHeardSound ? "secondary" : "primary"}
                   className="mt-4 w-full"
                   onClick={handleCheckMic}
                   disabled={isCheckingMic}
                 >
                   {isCheckingMic ? (
                     <Loader2 className="h-4 w-4 animate-spin" />
-                  ) : micChecked ? (
+                  ) : micHeardSound ? (
                     <Mic className="h-4 w-4" />
                   ) : (
                     <MicOff className="h-4 w-4" />
                   )}
-                  {micChecked ? "Microphone Working" : "Test My Microphone"}
+                  {micHeardSound
+                    ? "Microphone Working"
+                    : micChecked
+                      ? "Waiting to hear you..."
+                      : "Test My Microphone"}
                 </Button>
               </div>
 
@@ -755,13 +817,13 @@ export default function AiTestRoomPage({
               size="lg"
               variant="accent"
               className="mt-6 w-full"
-              disabled={!micChecked || !cameraOn || connectionState !== "connected"}
+              disabled={!micHeardSound || !cameraOn || connectionState !== "connected"}
               onClick={handleBeginTest}
             >
-              {micChecked && cameraOn && connectionState === "connecting" && (
+              {micHeardSound && cameraOn && connectionState === "connecting" && (
                 <Loader2 className="h-4 w-4 animate-spin" />
               )}
-              {micChecked && cameraOn && connectionState === "connecting"
+              {micHeardSound && cameraOn && connectionState === "connecting"
                 ? "Connecting to your examiner..."
                 : "Begin Test"}
             </Button>

@@ -7,7 +7,18 @@ export async function getMicStream(): Promise<MediaStream> {
   if (activeStream && activeStream.getTracks().some((t) => t.readyState === "live")) {
     return activeStream;
   }
-  activeStream = await navigator.mediaDevices.getUserMedia({ audio: true });
+  // Explicit echo cancellation/noise suppression, rather than relying on
+  // browser defaults — the examiner's own voice plays through the speakers
+  // right before each recording starts, so without this the mic can pick up
+  // enough of that tail to confuse the transcriber (see the hallucination
+  // filter in /api/ai-test/transcribe).
+  activeStream = await navigator.mediaDevices.getUserMedia({
+    audio: {
+      echoCancellation: true,
+      noiseSuppression: true,
+      autoGainControl: true,
+    },
+  });
   return activeStream;
 }
 
