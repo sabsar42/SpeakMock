@@ -62,7 +62,7 @@ export function ResendLinkDialog({ open, onOpenChange }: ResendLinkDialogProps) 
             <Mail className="h-6 w-6" />
           </div>
           <p className="mt-3 text-center text-sm text-text-secondary">
-            Lost your session link? Enter your Gmail and we&apos;ll resend it.
+            Lost your session link? Enter your email and we&apos;ll resend it.
           </p>
 
           {submitted ? (
@@ -72,11 +72,11 @@ export function ResendLinkDialog({ open, onOpenChange }: ResendLinkDialogProps) 
           ) : (
             <form onSubmit={handleSubmit} className="mt-6 space-y-4">
               <div className="space-y-2">
-                <Label htmlFor="resend-email">Gmail Address</Label>
+                <Label htmlFor="resend-email">Email Address</Label>
                 <Input
                   id="resend-email"
                   type="email"
-                  placeholder="you@gmail.com"
+                  placeholder="you@example.com"
                   value={email}
                   onChange={(e) => setEmail(e.target.value)}
                   required

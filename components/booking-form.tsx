@@ -120,11 +120,11 @@ export function BookingForm({
       </div>
 
       <div className="space-y-2">
-        <Label htmlFor="email">Gmail Address</Label>
+        <Label htmlFor="email">Email Address</Label>
         <Input
           id="email"
           type="email"
-          placeholder="you@gmail.com"
+          placeholder="you@example.com"
           value={email}
           onChange={(e) => setEmail(e.target.value)}
           required

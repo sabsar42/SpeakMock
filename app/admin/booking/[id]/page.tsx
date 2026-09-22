@@ -162,7 +162,7 @@ export default function AdminBookingDetailPage({
               <div className="grid gap-4 sm:grid-cols-2">
                 <div>
                   <p className="text-xs font-medium uppercase tracking-wide text-text-muted">
-                    Gmail
+                    Email
                   </p>
                   <p className="mt-1 text-sm text-text-secondary">{booking.student_email}</p>
                 </div>

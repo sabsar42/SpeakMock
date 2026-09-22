@@ -1,6 +1,6 @@
 import { NextRequest, NextResponse } from "next/server";
 import { supabaseServer } from "@/lib/supabase/server";
-import { isGmailAddress } from "@/lib/utils";
+import { isValidEmail } from "@/lib/utils";
 import { sendBookingReceivedEmail, sendAdminBookingAlertEmail } from "@/lib/resend/emails";
 import { logActivity } from "@/lib/log-activity";
 import type { Booking } from "@/lib/types";
@@ -57,9 +57,9 @@ export async function POST(request: NextRequest) {
     return NextResponse.json({ error: "All fields are required." }, { status: 400 });
   }
 
-  if (!email || !isGmailAddress(email)) {
+  if (!email || !isValidEmail(email)) {
     return NextResponse.json(
-      { error: "Please enter a valid Gmail address." },
+      { error: "Please enter a valid email address." },
       { status: 400 }
     );
   }

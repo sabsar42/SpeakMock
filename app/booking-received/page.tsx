@@ -10,7 +10,7 @@ import { Button } from "@/components/ui/button";
 
 function BookingReceivedContent() {
   const searchParams = useSearchParams();
-  const email = searchParams.get("email") ?? "your Gmail address";
+  const email = searchParams.get("email") ?? "your email address";
 
   return (
     <div className="mx-auto max-w-md rounded-2xl border border-gray-200 bg-white p-8 text-center sm:p-10">
@@ -22,7 +22,7 @@ function BookingReceivedContent() {
       </h1>
       <p className="mt-3 text-text-secondary">
         We&apos;ll verify your payment and confirm your slot within a few
-        hours. Check your Gmail for updates.
+        hours. Check your email for updates.
       </p>
       <p className="mt-4 rounded-lg border border-border bg-background px-4 py-2.5 text-sm font-medium text-text-primary">
         {email}

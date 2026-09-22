@@ -25,7 +25,7 @@ export default function AiTestReceivedEmail({
       </Text>
       <Text className="text-secondary">
         Once we verify your payment, your unique test room link will arrive at
-        this Gmail address within a few hours.
+        this email address within a few hours.
       </Text>
       <Text className="text-secondary">
         Questions? Reply to this email or contact {adminEmail}.

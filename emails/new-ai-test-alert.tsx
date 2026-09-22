@@ -25,7 +25,7 @@ export default function NewAiTestAlertEmail({
           <strong className="text-[#152430]">Name:</strong> {studentName}
         </Text>
         <Text className="m-0 mt-2 text-sm text-secondary">
-          <strong className="text-[#152430]">Gmail:</strong> {studentEmail}
+          <strong className="text-[#152430]">Email:</strong> {studentEmail}
         </Text>
         <Text className="m-0 mt-2 text-sm text-secondary">
           <strong className="text-[#152430]">Transaction ID:</strong>{" "}

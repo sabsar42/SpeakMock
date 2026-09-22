@@ -10,7 +10,7 @@ import { Button } from "@/components/ui/button";
 
 function PendingContent() {
   const searchParams = useSearchParams();
-  const email = searchParams.get("email") ?? "your Gmail address";
+  const email = searchParams.get("email") ?? "your email address";
 
   return (
     <div className="mx-auto max-w-md rounded-2xl border border-gray-200 bg-white p-8 text-center sm:p-10">
@@ -21,7 +21,7 @@ function PendingContent() {
         We&apos;re verifying your payment
       </h1>
       <p className="mt-3 text-text-secondary">
-        Your test link will arrive at the Gmail address below within a few
+        Your test link will arrive at the email address below within a few
         hours.
       </p>
       <p className="mt-4 rounded-lg border border-border bg-background px-4 py-2.5 text-sm font-medium text-text-primary">

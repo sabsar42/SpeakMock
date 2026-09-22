@@ -42,7 +42,7 @@ export default function ResendLinkPage() {
             Resend My Link
           </h1>
           <p className="mt-2 text-center text-text-secondary">
-            Lost your session link? Enter your Gmail and we&apos;ll resend it.
+            Lost your session link? Enter your email and we&apos;ll resend it.
           </p>
 
           {submitted ? (
@@ -52,11 +52,11 @@ export default function ResendLinkPage() {
           ) : (
             <form onSubmit={handleSubmit} className="mt-8 space-y-5">
               <div className="space-y-2">
-                <Label htmlFor="email">Gmail Address</Label>
+                <Label htmlFor="email">Email Address</Label>
                 <Input
                   id="email"
                   type="email"
-                  placeholder="you@gmail.com"
+                  placeholder="you@example.com"
                   value={email}
                   onChange={(e) => setEmail(e.target.value)}
                   required

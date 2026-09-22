@@ -20,8 +20,14 @@ export function formatSlotDateTime(isoString: string, timeZone = "Asia/Dhaka"): 
   }).format(date);
 }
 
-export function isGmailAddress(email: string): boolean {
-  return /^[^\s@]+@gmail\.com$/i.test(email.trim());
+/**
+ * A permissive but real email-shape check — one @ with something on both
+ * sides, no whitespace. Any provider (Gmail, Hotmail, Yahoo, work domains,
+ * etc.) is accepted; this only rejects obviously malformed input, since
+ * Resend will reject genuinely invalid addresses at send time anyway.
+ */
+export function isValidEmail(email: string): boolean {
+  return /^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(email.trim());
 }
 
 /**

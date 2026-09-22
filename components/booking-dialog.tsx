@@ -50,7 +50,7 @@ export function BookingDialog({
               </div>
               <p className="mt-4 text-sm text-text-secondary">
                 We&apos;ll verify your payment and confirm your slot within a
-                few hours. Check your Gmail for updates.
+                few hours. Check your email for updates.
               </p>
               <p className="mt-3 rounded-lg border border-border bg-background px-4 py-2.5 text-sm font-medium text-text-primary">
                 {submittedEmail}

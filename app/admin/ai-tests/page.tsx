@@ -306,7 +306,7 @@ export default function AdminAiTestsPage() {
                 Name
               </th>
               <th className="px-4 py-3 text-xs font-semibold uppercase tracking-wide text-text-muted">
-                Gmail
+                Email
               </th>
               <th className="px-4 py-3 text-xs font-semibold uppercase tracking-wide text-text-muted">
                 Transaction ID

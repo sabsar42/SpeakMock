@@ -31,7 +31,7 @@ export default function BookingReceivedEmail({
       </Text>
       <Text className="text-secondary">
         We&apos;ll verify your payment and confirm your slot within a few
-        hours. Check your Gmail for updates.
+        hours. Check your email for updates.
       </Text>
       <Text className="text-secondary">
         Questions? Reply to this email or contact {adminEmail}.

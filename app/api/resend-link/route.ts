@@ -1,6 +1,6 @@
 import { NextRequest, NextResponse } from "next/server";
 import { supabaseServer } from "@/lib/supabase/server";
-import { isGmailAddress } from "@/lib/utils";
+import { isValidEmail } from "@/lib/utils";
 import { sendResendLinkEmail } from "@/lib/resend/emails";
 
 export async function POST(request: NextRequest) {
@@ -15,7 +15,7 @@ export async function POST(request: NextRequest) {
 
   // Always return the same success response regardless of outcome, so we
   // never reveal whether an email address has a session on file.
-  if (!email || !isGmailAddress(email)) {
+  if (!email || !isValidEmail(email)) {
     return NextResponse.json({ success: true });
   }
 

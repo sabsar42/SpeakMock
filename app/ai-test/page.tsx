@@ -99,7 +99,7 @@ export default function AiTestPage() {
               <Sparkles className="h-8 w-8 text-accent" />
             </div>
             <p className="mt-3 text-sm text-text-secondary">
-              Pay via {PAYMENT_METHOD_NAME}. Your test link arrives by Gmail
+              Pay via {PAYMENT_METHOD_NAME}. Your test link arrives by email
               once payment is verified.
             </p>
           </Card>
