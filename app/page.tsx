@@ -293,7 +293,13 @@ export default function HomePage() {
                 ))}
               </ul>
               <div className="mt-8 flex flex-col gap-3 sm:flex-row">
-                <Button asChild size="lg" variant="accent">
+                {/* Same dark-crimson glow as the sample-score panel beside it, toned down. */}
+                <Button
+                  asChild
+                  size="lg"
+                  variant="accent"
+                  className="bg-gradient-to-br from-accent via-[#7F0F2E] to-[#3A0A17] shadow-[0_6px_20px_-6px_rgba(159,18,57,0.6)] transition-[filter,box-shadow] hover:brightness-110 hover:shadow-[0_8px_24px_-6px_rgba(159,18,57,0.75)]"
+                >
                   <Link href="/ai-test">
                     Start AI Mock Test · {AI_TEST_FEE}
                     <ArrowRight className="h-4 w-4" />
