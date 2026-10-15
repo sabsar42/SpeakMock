@@ -17,12 +17,16 @@ export async function POST(request: NextRequest) {
   const supabase = supabaseServer();
   const { data: session, error: sessionError } = await supabase
     .from("ai_test_sessions")
-    .select("id, is_deleted")
+    .select("id, is_deleted, phase")
     .eq("token", token)
     .maybeSingle();
 
   if (sessionError || !session || session.is_deleted) {
     return NextResponse.json({ error: "Session not found." }, { status: 404 });
+  }
+
+  if (session.phase === "completed") {
+    return NextResponse.json({ error: "This test has already finished." }, { status: 409 });
   }
 
   // Whisper was trained on YouTube videos with subtitles, so when fed audio

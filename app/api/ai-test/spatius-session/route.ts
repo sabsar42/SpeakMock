@@ -26,12 +26,17 @@ export async function POST(request: NextRequest) {
 
   const { data: session, error: sessionError } = await supabase
     .from("ai_test_sessions")
-    .select("id, is_deleted")
+    .select("id, is_deleted, phase")
     .eq("token", body.token)
     .maybeSingle();
 
   if (sessionError || !session || session.is_deleted) {
     return NextResponse.json({ error: "Session not found." }, { status: 404 });
+  }
+
+  // Each avatar session spends Spatius minutes — none for a finished test.
+  if (session.phase === "completed") {
+    return NextResponse.json({ error: "This test has already finished." }, { status: 409 });
   }
 
   const apiKey = process.env.SPATIUS_API_KEY;

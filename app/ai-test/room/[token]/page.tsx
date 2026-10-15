@@ -133,6 +133,8 @@ export default function AiTestRoomPage({
   const [flaggedIssue, setFlaggedIssue] = useState(false);
 
   const [prepSecondsLeft, setPrepSecondsLeft] = useState(PREP_SECONDS);
+  const [prepRunning, setPrepRunning] = useState(false);
+  const part2StartedRef = useRef(false);
   const [speakingSecondsLeft, setSpeakingSecondsLeft] = useState(SPEAKING_SECONDS);
   const [generatingStep, setGeneratingStep] = useState(0);
 
@@ -151,6 +153,12 @@ export default function AiTestRoomPage({
               : "Could not load your test. Please try again."
           );
           setPhase("error");
+          return;
+        }
+        // The room link is also the result link — a finished test goes
+        // straight to its results instead of starting a fresh attempt.
+        if (data.phase === "completed") {
+          window.location.replace(`/ai-test/result/${token}`);
           return;
         }
         if (!data.part1Questions?.length || !data.part3Questions?.length || !data.cueCard) {
@@ -259,11 +267,13 @@ export default function AiTestRoomPage({
     };
   }, []);
 
-  // The level meter is only needed for the pre-test check — stop it once
-  // the exam actually starts so it isn't fighting detectSilence for the
-  // same AudioContext/analyser during real turns.
+  // The same level meter from the mic check keeps running through the exam
+  // (it drives the live input bars on the self-view tile), and stops once
+  // the test is over. Each watcher owns its own AudioContext, so it doesn't
+  // interfere with detectSilence.
   useEffect(() => {
-    if (phase !== "before_start" && stopMicLevelWatchRef.current) {
+    const examOver = phase === "generating" || phase === "done" || phase === "error";
+    if (examOver && stopMicLevelWatchRef.current) {
       stopMicLevelWatchRef.current();
       stopMicLevelWatchRef.current = null;
     }
@@ -416,7 +426,9 @@ export default function AiTestRoomPage({
       setMicChecked(true);
       stopMicLevelWatchRef.current?.();
       stopMicLevelWatchRef.current = watchMicLevel(stream, (level) => {
-        setMicLevel(level);
+        // Rounded to 5% steps: React skips the re-render when the value is
+        // unchanged, so a steady signal doesn't re-render the room 10x/s.
+        setMicLevel(Math.round(level * 20) / 20);
         if (level > MIC_HEARD_THRESHOLD) setMicHeardSound(true);
       });
     } catch {
@@ -457,6 +469,8 @@ export default function AiTestRoomPage({
 
     setPhase("part2_prep");
     setPrepSecondsLeft(PREP_SECONDS);
+    setPrepRunning(false);
+    part2StartedRef.current = false;
     if (data.cueCard) {
       await saveTurn(
         "examiner",
@@ -466,34 +480,44 @@ export default function AiTestRoomPage({
         "part2_prep"
       );
       await speak(
-        `${data.cueCard.topic}. You have one minute to prepare, then up to two minutes to speak.`
+        `Now I'm going to give you a topic. ${data.cueCard.topic}. You have one minute to prepare, then up to two minutes to speak.`
       );
     }
     setAvatarStatus("idle");
+    // The minute starts once the examiner has finished explaining the task,
+    // not while they're still talking — otherwise the intro eats prep time.
+    setPrepRunning(true);
   }
 
   useEffect(() => {
-    if (phase !== "part2_prep" || prepSecondsLeft <= 0) return;
+    if (phase !== "part2_prep" || !prepRunning || prepSecondsLeft <= 0) return;
     const timer = setTimeout(() => setPrepSecondsLeft((s) => s - 1), 1000);
     return () => clearTimeout(timer);
-  }, [phase, prepSecondsLeft]);
+  }, [phase, prepRunning, prepSecondsLeft]);
 
-  // Prep time counts down on its own into the speaking turn — no button, to
-  // match a real examiner just starting to listen once the minute is up.
+  // Prep time runs out into the speaking turn on its own, like a real examiner.
   useEffect(() => {
-    if (phase === "part2_prep" && prepSecondsLeft === 0) {
-      startSpeakingPart2();
+    if (phase === "part2_prep" && prepRunning && prepSecondsLeft === 0) {
+      void startSpeakingPart2();
     }
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [phase, prepSecondsLeft]);
+  }, [phase, prepRunning, prepSecondsLeft]);
 
-  function startSpeakingPart2() {
+  async function startSpeakingPart2() {
     const data = sessionDataRef.current;
     if (!data?.cueCard) return;
+    // The prep timer running out and "I'm ready" can both land here; a second
+    // run would start a second recording and advance to Part 3 twice.
+    if (part2StartedRef.current) return;
+    part2StartedRef.current = true;
+    setPrepRunning(false);
+
+    await speak("All right. Please start speaking now. You have up to two minutes.");
+
     setPhase("part2_speaking");
     setSpeakingSecondsLeft(SPEAKING_SECONDS);
     // Part 2 is a sustained monologue where natural pauses are expected, so
-    // the 2-minute limit ends the turn, not silence.
+    // the 2-minute limit (or "I'm done") ends the turn, not silence.
     listenForAnswer(2, data.cueCard.id, startPart3, {
       autoStopMs: SPEAKING_SECONDS * 1000,
       useSilenceDetection: false,
@@ -607,7 +631,9 @@ export default function AiTestRoomPage({
         );
       }
     } else if (phase === "part2_speaking") {
-      startSpeakingPart2();
+      // Deliberate restart of the long turn, so lift the double-start guard.
+      part2StartedRef.current = false;
+      void startSpeakingPart2();
     } else if (phase === "part3") {
       const data = sessionDataRef.current;
       const question = data?.part3Questions[part3IndexRef.current];
@@ -621,6 +647,22 @@ export default function AiTestRoomPage({
 
   const inCall =
     phase === "part1" || phase === "part2_prep" || phase === "part2_speaking" || phase === "part3";
+  const inPart2 = phase === "part2_prep" || phase === "part2_speaking";
+
+  // Where the student is in the whole exam, for the top progress stepper.
+  const examPart = phase === "part1" ? 1 : inPart2 ? 2 : phase === "part3" ? 3 : 0;
+  const totalQuestions = sessionData
+    ? sessionData.part1Questions.length + 1 + sessionData.part3Questions.length
+    : 0;
+  const questionsDone =
+    examPart === 1
+      ? part1Index
+      : examPart === 2
+        ? (sessionData?.part1Questions.length ?? 0) + (phase === "part2_speaking" ? 0.5 : 0)
+        : examPart === 3
+          ? (sessionData?.part1Questions.length ?? 0) + 1 + part3Index
+          : 0;
+  const examProgress = totalQuestions ? Math.min(1, questionsDone / totalQuestions) : 0;
 
   const caption: Caption = (() => {
     if (!sessionData) return null;
@@ -630,9 +672,7 @@ export default function AiTestRoomPage({
         text: sessionData.part1Questions[part1Index].question_text,
       };
     }
-    if ((phase === "part2_prep" || phase === "part2_speaking") && sessionData.cueCard) {
-      return { label: "Part 2 · Cue Card", text: sessionData.cueCard.topic };
-    }
+    // Part 2 shows the full cue card in its own panel instead (see below).
     if (phase === "part3") {
       return {
         label: `Part 3 · Question ${part3Index + 1} of ${sessionData.part3Questions.length}`,
@@ -707,10 +747,25 @@ export default function AiTestRoomPage({
           className="h-full w-full scale-x-[-1] object-cover"
         />
         {isRecording && (
-          <span className="absolute left-2 top-2 flex h-2.5 w-2.5">
-            <span className="absolute inline-flex h-full w-full animate-ping rounded-full bg-error opacity-75" />
-            <span className="relative inline-flex h-2.5 w-2.5 rounded-full bg-error" />
-          </span>
+          <>
+            <span className="absolute left-2 top-2 flex h-2.5 w-2.5">
+              <span className="absolute inline-flex h-full w-full animate-ping rounded-full bg-error opacity-75" />
+              <span className="relative inline-flex h-2.5 w-2.5 rounded-full bg-error" />
+            </span>
+            {/* Live input level — visible proof the mic is hearing you. */}
+            <div className="absolute bottom-2 left-2 flex h-5 items-end gap-0.5">
+              {[0.15, 0.35, 0.55, 0.75, 0.9].map((step) => (
+                <span
+                  key={step}
+                  className={cn(
+                    "w-1 rounded-full transition-all duration-100",
+                    micLevel >= step ? "bg-success" : "bg-white/30"
+                  )}
+                  style={{ height: `${30 + step * 70}%` }}
+                />
+              ))}
+            </div>
+          </>
         )}
       </div>
 
@@ -847,16 +902,76 @@ export default function AiTestRoomPage({
             {avatarStatus === "processing" && <Loader2 className="h-3.5 w-3.5 animate-spin" />}
           </div>
 
+          {/* Top-center: where you are in the whole exam. */}
+          <div className="absolute left-1/2 top-4 hidden w-64 -translate-x-1/2 sm:block">
+            <div className="flex justify-between text-[11px] font-semibold uppercase tracking-wide">
+              {[1, 2, 3].map((n) => (
+                <span
+                  key={n}
+                  className={cn(
+                    "transition-colors",
+                    n === examPart ? "text-white" : n < examPart ? "text-white/60" : "text-white/30"
+                  )}
+                >
+                  Part {n}
+                </span>
+              ))}
+            </div>
+            <div className="mt-1.5 h-1 overflow-hidden rounded-full bg-white/15">
+              <div
+                className="h-full rounded-full bg-accent transition-all duration-700"
+                style={{ width: `${examProgress * 100}%` }}
+              />
+            </div>
+          </div>
+
           {/* Top-right: Part 2 timers, when relevant. */}
           {phase === "part2_prep" && (
-            <div className="absolute right-4 top-4 rounded-full bg-black/40 px-3.5 py-1.5 text-sm font-semibold tabular-nums text-white backdrop-blur">
-              Prep: 0:{prepSecondsLeft.toString().padStart(2, "0")}
+            <div
+              className={cn(
+                "absolute right-4 top-4 rounded-full px-3.5 py-1.5 text-sm font-semibold tabular-nums text-white backdrop-blur",
+                prepRunning && prepSecondsLeft <= 10 ? "bg-accent/80" : "bg-black/40"
+              )}
+            >
+              {prepRunning ? `Prep: 0:${prepSecondsLeft.toString().padStart(2, "0")}` : "Listen…"}
             </div>
           )}
           {phase === "part2_speaking" && (
-            <div className="absolute right-4 top-4 rounded-full bg-black/40 px-3.5 py-1.5 text-sm font-semibold tabular-nums text-white backdrop-blur">
+            <div
+              className={cn(
+                "absolute right-4 top-4 rounded-full px-3.5 py-1.5 text-sm font-semibold tabular-nums text-white backdrop-blur",
+                speakingSecondsLeft <= 15 ? "bg-accent/80" : "bg-black/40"
+              )}
+            >
               {Math.floor(speakingSecondsLeft / 60)}:
               {(speakingSecondsLeft % 60).toString().padStart(2, "0")} remaining
+            </div>
+          )}
+
+          {/* Part 2 cue card — the full card with its prompts, like the paper
+              card a candidate is handed in the real test. Beside the examiner
+              on wide screens, over the bottom of the call on narrow ones. */}
+          {inPart2 && sessionData?.cueCard && (
+            <div className="absolute inset-x-4 bottom-20 rounded-2xl bg-white/95 p-5 shadow-2xl backdrop-blur sm:bottom-24 lg:inset-x-auto lg:bottom-auto lg:left-6 lg:top-1/2 lg:w-80 lg:-translate-y-1/2">
+              <p className="text-[11px] font-semibold uppercase tracking-wide text-accent">
+                Part 2 · Cue Card
+              </p>
+              <h3 className="mt-1.5 text-base font-semibold text-text-primary">
+                {sessionData.cueCard.topic}
+              </h3>
+              <p className="mt-3 text-xs font-medium text-text-muted">You should say:</p>
+              <ul className="mt-1 list-disc space-y-1 pl-5 text-sm text-text-secondary">
+                {sessionData.cueCard.bullet_points.map((point) => (
+                  <li key={point}>{point}</li>
+                ))}
+              </ul>
+              <p className="mt-3 text-sm text-text-secondary">{sessionData.cueCard.closing_prompt}</p>
+              {phase === "part2_prep" && prepRunning && (
+                <Button size="sm" variant="accent" className="mt-4 w-full" onClick={() => void startSpeakingPart2()}>
+                  <Mic className="h-3.5 w-3.5" />
+                  I&apos;m ready — start speaking
+                </Button>
+              )}
             </div>
           )}
 
@@ -877,11 +992,6 @@ export default function AiTestRoomPage({
                   {caption.label}
                 </p>
                 <p className="mt-1 text-base font-medium text-white sm:text-lg">{caption.text}</p>
-                {phase === "part2_speaking" && (
-                  <p className="mt-2 text-xs text-slate-300">
-                    Speak for up to 2 minutes — I&apos;ll let you know when we move on.
-                  </p>
-                )}
               </div>
             </div>
           )}

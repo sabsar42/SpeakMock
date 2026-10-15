@@ -45,12 +45,19 @@ export async function POST(request: NextRequest) {
 
   const { data: session, error: sessionError } = await supabase
     .from("ai_test_sessions")
-    .select("id, booking_id, transcript, started_at")
+    .select("id, booking_id, transcript, started_at, phase, is_deleted")
     .eq("token", token)
     .maybeSingle<AiTestSession>();
 
-  if (sessionError || !session) {
+  if (sessionError || !session || session.is_deleted) {
     return NextResponse.json({ error: "Session not found." }, { status: 404 });
+  }
+
+  // The room token doubles as the result link, so it stays valid after the
+  // test — without this a finished transcript could be appended to and then
+  // re-scored.
+  if (session.phase === "completed") {
+    return NextResponse.json({ error: "This test has already finished." }, { status: 409 });
   }
 
   const turn: TranscriptTurn = {

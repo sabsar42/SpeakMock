@@ -2,6 +2,8 @@ import { NextRequest, NextResponse } from "next/server";
 import { supabaseServer } from "@/lib/supabase/server";
 import { textToPcm16 } from "@/lib/ai-test/tts";
 
+const MAX_TEXT_LENGTH = 600;
+
 export async function POST(request: NextRequest) {
   let body: { token?: string; text?: string };
   try {
@@ -14,16 +16,26 @@ export async function POST(request: NextRequest) {
     return NextResponse.json({ error: "token and text are required." }, { status: 400 });
   }
 
+  // The examiner's longest line (the Part 2 cue card intro) is well under
+  // this; the cap stops a valid token being used as a free bulk-TTS proxy.
+  if (body.text.length > MAX_TEXT_LENGTH) {
+    return NextResponse.json({ error: "Text is too long." }, { status: 413 });
+  }
+
   const supabase = supabaseServer();
 
   const { data: session, error: sessionError } = await supabase
     .from("ai_test_sessions")
-    .select("id, is_deleted")
+    .select("id, is_deleted, phase")
     .eq("token", body.token)
     .maybeSingle();
 
   if (sessionError || !session || session.is_deleted) {
     return NextResponse.json({ error: "Session not found." }, { status: 404 });
+  }
+
+  if (session.phase === "completed") {
+    return NextResponse.json({ error: "This test has already finished." }, { status: 409 });
   }
 
   try {

@@ -92,8 +92,15 @@ export async function POST(request: NextRequest) {
     .eq("token", body.token)
     .maybeSingle<AiTestSession>();
 
-  if (sessionError || !session) {
+  if (sessionError || !session || session.is_deleted) {
     return NextResponse.json({ error: "Session not found." }, { status: 404 });
+  }
+
+  // Scoring costs LLM calls and emails the student, and the token is public
+  // to whoever has the result link — score each test once. A failed attempt
+  // never reaches "completed", so retrying after a model outage still works.
+  if (session.phase === "completed") {
+    return NextResponse.json({ error: "This test has already been scored." }, { status: 409 });
   }
 
   const { data: booking, error: bookingError } = await supabase
