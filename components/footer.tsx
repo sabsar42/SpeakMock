@@ -1,10 +1,9 @@
 import Link from "next/link";
 import { Mail } from "lucide-react";
 
-// The old hardcoded hello@speakmock.com was on a domain SpeakMock doesn't
-// own, so student emails to it went nowhere. Configurable, defaulting to the
-// verified sending domain.
-const CONTACT_EMAIL = process.env.NEXT_PUBLIC_CONTACT_EMAIL ?? "hello@speakmock.printez.co.uk";
+// Public-facing contact address. Override with NEXT_PUBLIC_CONTACT_EMAIL once
+// a real inbox is set up for it.
+const CONTACT_EMAIL = process.env.NEXT_PUBLIC_CONTACT_EMAIL ?? "hello@speakmock.com";
 
 export function Footer() {
   return (

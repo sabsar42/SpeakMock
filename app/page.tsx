@@ -269,17 +269,73 @@ export default function HomePage() {
         </section>
 
         {/* Closing CTA */}
-        <section className="px-4 py-16 sm:px-6">
-          <div className="mx-auto max-w-4xl rounded-3xl bg-gradient-to-br from-dune-600 to-dune-700 px-6 py-12 text-center shadow-lg sm:px-12">
-            <h2 className="text-3xl font-bold text-white">Ready to hear your band score?</h2>
-            <p className="mx-auto mt-3 max-w-lg text-white/80">
-              Fifteen minutes, three parts, one detailed report. No slot to wait for.
-            </p>
-            <Button asChild size="lg" className="mt-7 bg-white text-dune-700 hover:bg-white/90">
-              <Link href="/ai-test">
-                Start AI Mock Test <ArrowRight className="h-4 w-4" />
-              </Link>
-            </Button>
+        <section className="px-4 py-16 sm:px-6 sm:py-20">
+          <div className="mx-auto grid max-w-5xl overflow-hidden rounded-3xl border border-border bg-white shadow-sm md:grid-cols-[minmax(0,1.3fr)_minmax(0,1fr)]">
+            <div className="p-8 sm:p-10">
+              <h2 className="text-3xl font-bold leading-tight text-text-primary">
+                Ready to hear your <span className="text-accent">band score</span>?
+              </h2>
+              <p className="mt-3 text-text-secondary">
+                One sitting, no slot to wait for. Here&apos;s everything that happens:
+              </p>
+              <ul className="mt-6 space-y-3">
+                {[
+                  { icon: Clock, text: "About 15 minutes, start whenever you like" },
+                  { icon: Mic, text: "All three parts, face to face with the AI examiner" },
+                  { icon: Sparkles, text: "Band score, feedback and PDF report minutes later" },
+                ].map(({ icon: Icon, text }) => (
+                  <li key={text} className="flex items-center gap-3 text-sm text-text-primary">
+                    <span className="flex h-8 w-8 shrink-0 items-center justify-center rounded-lg bg-accent-light text-accent">
+                      <Icon className="h-4 w-4" />
+                    </span>
+                    {text}
+                  </li>
+                ))}
+              </ul>
+              <div className="mt-8 flex flex-col gap-3 sm:flex-row">
+                <Button asChild size="lg" variant="accent">
+                  <Link href="/ai-test">
+                    Start AI Mock Test · {AI_TEST_FEE}
+                    <ArrowRight className="h-4 w-4" />
+                  </Link>
+                </Button>
+                <Button size="lg" variant="outline" onClick={() => setBookingOpen(true)}>
+                  Book a human session
+                </Button>
+              </div>
+            </div>
+
+            {/* A glimpse of the payoff, echoing the sample result above. */}
+            <div className="relative flex items-center justify-center overflow-hidden bg-[#1C0A11] p-8 sm:p-10">
+              <div className="absolute -right-16 -top-16 h-56 w-56 rounded-full bg-accent/30 blur-3xl" />
+              <div className="absolute -bottom-20 -left-10 h-56 w-56 rounded-full bg-dune-400/20 blur-3xl" />
+              <div className="relative w-full max-w-[16rem] rounded-2xl border border-white/10 bg-white/5 p-5 backdrop-blur">
+                <p className="text-[11px] font-semibold uppercase tracking-wide text-white/50">Your overall band</p>
+                <p className="mt-1 text-5xl font-bold text-white">6.5</p>
+                <div className="mt-5 space-y-2.5">
+                  {[
+                    ["Fluency", 7],
+                    ["Vocabulary", 6.5],
+                    ["Grammar", 6],
+                    ["Pronunciation", 6.5],
+                  ].map(([label, score]) => (
+                    <div key={label}>
+                      <div className="flex justify-between text-xs text-white/70">
+                        <span>{label}</span>
+                        <span className="font-semibold text-white">{Number(score).toFixed(1)}</span>
+                      </div>
+                      <div className="mt-1 h-1.5 overflow-hidden rounded-full bg-white/10">
+                        <div
+                          className="h-full rounded-full bg-dune-400"
+                          style={{ width: `${(Number(score) / 9) * 100}%` }}
+                        />
+                      </div>
+                    </div>
+                  ))}
+                </div>
+                <p className="mt-4 text-[11px] text-white/40">Sample result</p>
+              </div>
+            </div>
           </div>
         </section>
       </main>
