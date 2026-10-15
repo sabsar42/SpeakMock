@@ -1,5 +1,6 @@
 import { PDFDocument, StandardFonts, rgb, type PDFFont, type PDFPage } from "pdf-lib";
 import type { AiCriterionScore, TranscriptTurn } from "@/lib/types";
+import { stripWrappingQuotes } from "@/lib/utils";
 
 export interface AiTestReportData {
   studentName: string;
@@ -33,10 +34,11 @@ function sanitizeForWinAnsi(text: string): string {
     .replace(/[^\x20-\x7E]/g, "");
 }
 
-const COLOR_TEXT = rgb(0x15 / 255, 0x24 / 255, 0x30 / 255);
-const COLOR_MUTED = rgb(0x4b / 255, 0x63 / 255, 0x73 / 255);
-const COLOR_ACCENT = rgb(0xc2 / 255, 0x5c / 255, 0x15 / 255);
-const COLOR_PRIMARY = rgb(0x1f / 255, 0x4a / 255, 0x68 / 255);
+// Mirrors the site palette in tailwind.config.ts (crimson theme).
+const COLOR_TEXT = rgb(0x24 / 255, 0x10 / 255, 0x16 / 255);
+const COLOR_MUTED = rgb(0x6b / 255, 0x46 / 255, 0x52 / 255);
+const COLOR_ACCENT = rgb(0x9f / 255, 0x12 / 255, 0x39 / 255);
+const COLOR_PRIMARY = rgb(0x7f / 255, 0x0f / 255, 0x2e / 255);
 
 /**
  * pdf-lib has no layout engine (no flexbox, no automatic text flow), so this
@@ -145,7 +147,7 @@ class ReportBuilder {
     this.drawParagraph(data.justification, { size: 9, color: COLOR_MUTED, spacingAfter: 3 });
 
     for (const example of data.examples) {
-      this.drawParagraph(`“${example}”`, {
+      this.drawParagraph(`“${stripWrappingQuotes(example)}”`, {
         font: this.italicFont,
         size: 8.5,
         color: COLOR_MUTED,

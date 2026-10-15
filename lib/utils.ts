@@ -21,6 +21,17 @@ export function formatSlotDateTime(isoString: string, timeZone = "Asia/Dhaka"): 
 }
 
 /**
+ * Strips one pair of quote marks wrapping the whole string. Scoring models
+ * often return examples already in quotes, and both the result page and the
+ * PDF add their own — without this the student sees ""doubled"" quotes.
+ */
+export function stripWrappingQuotes(text: string): string {
+  const trimmed = text.trim();
+  const match = trimmed.match(/^["“”'‘’]([\s\S]*)["“”'‘’]$/);
+  return match ? match[1].trim() : trimmed;
+}
+
+/**
  * A permissive but real email-shape check — one @ with something on both
  * sides, no whitespace. Any provider (Gmail, Hotmail, Yahoo, work domains,
  * etc.) is accepted; this only rejects obviously malformed input, since

@@ -1,9 +1,14 @@
 import Link from "next/link";
 import { Mail } from "lucide-react";
 
+// The old hardcoded hello@speakmock.com was on a domain SpeakMock doesn't
+// own, so student emails to it went nowhere. Configurable, defaulting to the
+// verified sending domain.
+const CONTACT_EMAIL = process.env.NEXT_PUBLIC_CONTACT_EMAIL ?? "hello@speakmock.printez.co.uk";
+
 export function Footer() {
   return (
-    <footer className="bg-[#0B1D2E]">
+    <footer className="bg-[#1C0A11]">
       <div className="mx-auto max-w-6xl px-4 py-14 sm:px-6">
         <div className="flex flex-col gap-10 sm:flex-row sm:justify-between">
           <div className="max-w-sm">
@@ -18,11 +23,11 @@ export function Footer() {
               get back to you within a few hours.
             </p>
             <a
-              href="mailto:hello@speakmock.com"
+              href={`mailto:${CONTACT_EMAIL}`}
               className="mt-3 inline-flex items-center gap-1.5 text-sm font-medium text-white hover:text-dune-300"
             >
               <Mail className="h-4 w-4" />
-              hello@speakmock.com
+              {CONTACT_EMAIL}
             </a>
           </div>
 
@@ -34,6 +39,11 @@ export function Footer() {
               <li>
                 <Link href="/" className="hover:text-white">
                   Home
+                </Link>
+              </li>
+              <li>
+                <Link href="/ai-test" className="hover:text-white">
+                  AI Mock Test
                 </Link>
               </li>
               <li>
@@ -50,8 +60,13 @@ export function Footer() {
           </div>
         </div>
 
-        <div className="mt-10 border-t border-white/10 pt-6 text-center text-xs text-white/40">
-          &copy; {new Date().getFullYear()} SpeakMock. All rights reserved.
+        <div className="mt-10 space-y-2 border-t border-white/10 pt-6 text-center text-xs text-white/40">
+          <p>
+            SpeakMock is an independent practice service and is not affiliated with, endorsed by,
+            or connected to IELTS, the British Council, IDP or Cambridge University Press &amp;
+            Assessment. AI band scores are practice estimates, not official results.
+          </p>
+          <p>&copy; {new Date().getFullYear()} SpeakMock. All rights reserved.</p>
         </div>
       </div>
     </footer>

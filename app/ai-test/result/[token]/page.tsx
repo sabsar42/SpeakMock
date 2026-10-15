@@ -7,7 +7,7 @@ import { Navbar } from "@/components/navbar";
 import { Footer } from "@/components/footer";
 import { Button } from "@/components/ui/button";
 import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
-import { cn, formatCountdown } from "@/lib/utils";
+import { cn, formatCountdown, stripWrappingQuotes } from "@/lib/utils";
 import type { AiCriterionScore, AiTestResult, TranscriptTurn } from "@/lib/types";
 
 interface ResultData {
@@ -172,7 +172,7 @@ export default function AiTestResultPage({
                         key={i}
                         className="mt-2 border-l-2 border-border pl-3 text-xs italic text-text-muted"
                       >
-                        &ldquo;{example}&rdquo;
+                        &ldquo;{stripWrappingQuotes(example)}&rdquo;
                       </blockquote>
                     ))}
                     <div className="mt-3 flex items-start gap-2 rounded-lg bg-accent-light px-3 py-2 text-xs text-accent">

@@ -3,20 +3,14 @@
 import { useState } from "react";
 import Image from "next/image";
 import Link from "next/link";
-import {
-  ArrowRight,
-  Calendar,
-  CheckCircle,
-  Download,
-  Mic,
-  Sparkles,
-  Video,
-} from "lucide-react";
+import { ArrowRight, Calendar, CheckCircle, Clock, Mic, Sparkles, Video } from "lucide-react";
 import { Navbar } from "@/components/navbar";
 import { Footer } from "@/components/footer";
 import { Button } from "@/components/ui/button";
 import { BookingDialog } from "@/components/booking-dialog";
 import { ResendLinkDialog } from "@/components/resend-link-dialog";
+import { ExamDemo } from "@/components/landing/exam-demo";
+import { SampleResult } from "@/components/landing/sample-result";
 import {
   Accordion,
   AccordionContent,
@@ -24,59 +18,57 @@ import {
   AccordionTrigger,
 } from "@/components/ui/accordion";
 
-const PAYMENT_METHOD_NAME =
-  process.env.NEXT_PUBLIC_PAYMENT_METHOD_NAME ?? "bKash";
+const PAYMENT_METHOD_NAME = process.env.NEXT_PUBLIC_PAYMENT_METHOD_NAME ?? "bKash";
 const AI_TEST_FEE = process.env.NEXT_PUBLIC_AI_TEST_FEE ?? "৳120";
 const SESSION_FEE = process.env.NEXT_PUBLIC_SESSION_FEE ?? "৳500";
 
-const steps = [
+const humanSteps = [
   {
-    number: "01",
     title: "Book your slot",
-    description:
-      "Pick an available time and share your payment transaction ID.",
+    description: "Pick an available time and share your payment transaction ID.",
     icon: Calendar,
   },
   {
-    number: "02",
-    title: "Pay and confirm",
-    description:
-      "We verify your payment and confirm your slot within a few hours.",
+    title: "We confirm it",
+    description: "We verify your payment and email your Google Meet link within a few hours.",
     icon: CheckCircle,
   },
   {
-    number: "03",
     title: "Speak with an examiner",
-    description:
-      "Join your session on Google Meet for a real IELTS speaking test.",
-    icon: Mic,
+    description: "A live, full-format IELTS speaking test, with written feedback after.",
+    icon: Video,
   },
 ];
 
 const faqs = [
   {
-    question: "How long is the mock speaking test?",
+    question: "How does the AI mock test work?",
     answer:
-      "Each session runs 20 to 30 minutes and follows the real IELTS speaking format — Parts 1, 2, and 3.",
+      "It's a live video call with an AI examiner that follows the real IELTS speaking format — Part 1 interview, Part 2 cue card with one minute to prepare, and Part 3 discussion. Your answers are transcribed as you speak and scored on all four IELTS criteria.",
   },
   {
-    question: "How do I pay for a session?",
-    answer: `Payments are accepted via ${PAYMENT_METHOD_NAME}. After sending payment, enter your transaction ID on the booking form so we can verify it.`,
-  },
-  {
-    question: "How soon will my booking be confirmed?",
+    question: "What do I need for the AI test?",
     answer:
-      "We manually verify each payment and usually confirm bookings within a few hours. You'll get an email once it's confirmed with your Google Meet link.",
+      "A laptop or desktop with Chrome or Edge, a working microphone and camera, and about 15 quiet minutes. Headphones help — they stop the examiner's voice echoing into your mic.",
   },
   {
-    question: "What if I miss my session?",
+    question: "How accurate is the AI band score?",
+    answer:
+      "It's a practice estimate, not an official IELTS score. It's built to show you where you stand and what to fix — for a serious pre-exam check, book a session with a human examiner.",
+  },
+  {
+    question: "How do I pay?",
+    answer: `Payments are accepted via ${PAYMENT_METHOD_NAME}. After sending payment, enter your transaction ID on the form so we can verify it — your link arrives by email once it's confirmed.`,
+  },
+  {
+    question: "How long can I access my results?",
+    answer:
+      "Your result page and PDF report stay available for 72 hours after your test, so download the PDF if you want to keep it.",
+  },
+  {
+    question: "What if I miss a human session?",
     answer:
       "Please cancel or reschedule at least 24 hours in advance. No-shows are not eligible for a refund or automatic rescheduling.",
-  },
-  {
-    question: "How do I get my result?",
-    answer:
-      "After your session, your examiner's feedback and band score report will appear on your session page. You'll have 72 hours to download it before the page expires.",
   },
 ];
 
@@ -92,258 +84,202 @@ export default function HomePage() {
       {/* Hero */}
       <section className="relative overflow-hidden">
         <div className="absolute inset-0">
-          <Image
-            src="/hero/autumn-hero.webp"
-            alt=""
-            fill
-            priority
-            sizes="100vw"
-            className="object-cover"
-          />
-          <div className="absolute inset-x-0 top-0 h-[70%] bg-gradient-to-b from-black/80 via-black/40 to-transparent" />
-          {/* Fades the image into the page background at the bottom instead of
-              cutting off in a hard horizontal line. */}
+          <Image src="/hero/autumn-hero.webp" alt="" fill priority sizes="100vw" className="object-cover" />
+          {/* Covers the full text block — the autumn image is bright below
+              the clouds line, which washed out the subtitle and stat row. */}
+          <div className="absolute inset-x-0 top-0 h-[88%] bg-gradient-to-b from-black/80 via-black/55 to-transparent" />
+          {/* Fades the image into the page background instead of a hard line. */}
           <div className="absolute inset-x-0 bottom-0 h-64 bg-gradient-to-b from-transparent via-background/70 to-background" />
         </div>
 
         <Navbar transparent onBookClick={() => setBookingOpen(true)} />
 
-        <div className="relative mx-auto max-w-3xl px-4 pb-24 pt-16 text-center sm:px-6 sm:pb-32 sm:pt-24">
-          <span className="inline-flex items-center gap-2 rounded-full border border-red-500/40 bg-red-950/40 px-4 py-1.5 shadow-[0_0_22px_rgba(239,68,68,0.55)] backdrop-blur-md">
+        <div className="relative mx-auto max-w-3xl px-4 pb-20 pt-14 text-center sm:px-6 sm:pb-28 sm:pt-20">
+          <span className="inline-flex items-center gap-2 rounded-full border border-red-500/40 bg-red-950/40 px-4 py-1.5 shadow-[0_0_22px_rgba(239,68,68,0.45)] backdrop-blur-md">
             <span className="relative flex h-2 w-2">
               <span className="absolute inline-flex h-full w-full animate-ping rounded-full bg-red-500 opacity-75" />
               <span className="relative inline-flex h-2 w-2 rounded-full bg-red-500" />
             </span>
-            <span className="text-xs font-bold uppercase tracking-wider text-red-400">
-              Live
-            </span>
             <span className="text-xs font-medium uppercase tracking-wide text-white/90">
-              IELTS Speaking Mock Test
+              AI examiner · available 24/7
             </span>
           </span>
-          <h1 className="mt-5 text-5xl font-bold leading-tight text-white [text-shadow:0_2px_6px_rgba(0,0,0,0.4)] sm:text-6xl">
-            IELTS Speaking Practice,{" "}
-            <span className="text-dune-300">Simplified</span>
+          <h1 className="mt-5 text-4xl font-bold leading-tight text-white [text-shadow:0_2px_6px_rgba(0,0,0,0.4)] sm:text-6xl">
+            Sit a real IELTS speaking test, <span className="text-dune-300">any time</span>
           </h1>
           <p className="mx-auto mt-5 max-w-xl text-lg text-white [text-shadow:0_1px_4px_rgba(0,0,0,0.35)]">
-            Practise with an AI examiner and get your band score in minutes, or
-            book a live session with a real examiner.
+            A face-to-face video call with an AI examiner in the real three-part format — and your
+            band score with detailed feedback minutes later.
           </p>
 
-          <div className="mx-auto mt-10 grid max-w-3xl gap-4 text-left sm:grid-cols-2">
-            <div className="relative overflow-hidden rounded-2xl border border-white/90 bg-white p-6 shadow-[0_12px_36px_rgba(15,23,42,0.35)]">
-              <span className="inline-flex items-center gap-1.5 rounded-full border border-accent/30 bg-accent-light px-2.5 py-1 text-[11px] font-semibold uppercase tracking-wide text-accent">
-                <Sparkles className="h-3 w-3" />
-                Instant
-              </span>
-              <h2 className="mt-3 text-xl font-bold text-text-primary">AI Mock Test</h2>
-              <ul className="mt-3 space-y-1.5 text-sm text-text-secondary">
-                <li>Results in minutes, not days</li>
-                <li>AI examiner, available any time</li>
-                <li>Full band breakdown and PDF report</li>
-              </ul>
-              <p className="mt-4 text-2xl font-bold text-accent">{AI_TEST_FEE}</p>
-              <Button asChild size="lg" variant="accent" className="mt-4 w-full">
-                <Link href="/ai-test">
-                  Start Now
-                  <ArrowRight className="h-4 w-4" />
-                </Link>
-              </Button>
-            </div>
-
-            <div className="relative overflow-hidden rounded-2xl border border-white/90 bg-white p-6 shadow-[0_12px_36px_rgba(15,23,42,0.35)]">
-              <span className="inline-flex items-center gap-1.5 rounded-full border border-primary/20 bg-primary-light px-2.5 py-1 text-[11px] font-semibold uppercase tracking-wide text-primary">
-                <Video className="h-3 w-3" />
-                Live
-              </span>
-              <h2 className="mt-3 text-xl font-bold text-text-primary">Human Session</h2>
-              <ul className="mt-3 space-y-1.5 text-sm text-text-secondary">
-                <li>Real certified examiner</li>
-                <li>Live over Google Meet</li>
-                <li>Personal feedback on your answers</li>
-              </ul>
-              <p className="mt-4 text-2xl font-bold text-primary">{SESSION_FEE}</p>
-              <Button
-                size="lg"
-                variant="secondary"
-                className="mt-4 w-full"
-                onClick={() => setBookingOpen(true)}
-              >
-                Book a Slot
-              </Button>
-            </div>
+          <div className="mt-8 flex flex-col items-center justify-center gap-3 sm:flex-row">
+            <Button asChild size="lg" variant="accent" className="w-full sm:w-auto">
+              <Link href="/ai-test">
+                Start AI Mock Test · {AI_TEST_FEE}
+                <ArrowRight className="h-4 w-4" />
+              </Link>
+            </Button>
+            <Button asChild size="lg" variant="outline" className="w-full border-white/70 bg-white/90 sm:w-auto">
+              <a href="#how-it-works">See how it works</a>
+            </Button>
           </div>
 
-          <div className="mt-6">
-            <button
-              onClick={() => setResendOpen(true)}
-              className="rounded-full bg-black/30 px-4 py-1.5 text-sm font-medium text-white backdrop-blur-sm underline-offset-4 hover:underline"
-            >
-              Already booked? Get your link
-            </button>
+          <div className="mx-auto mt-8 flex max-w-xl flex-wrap justify-center gap-x-5 gap-y-2 text-sm text-white/90 [text-shadow:0_1px_3px_rgba(0,0,0,0.4)]">
+            <span className="inline-flex items-center gap-1.5">
+              <Clock className="h-4 w-4" /> ~15 minutes
+            </span>
+            <span className="inline-flex items-center gap-1.5">
+              <Mic className="h-4 w-4" /> Parts 1, 2 &amp; 3
+            </span>
+            <span className="inline-flex items-center gap-1.5">
+              <Sparkles className="h-4 w-4" /> 4-criteria band score + PDF
+            </span>
           </div>
+
+          <button
+            onClick={() => setResendOpen(true)}
+            className="mt-6 rounded-full bg-black/30 px-4 py-1.5 text-sm font-medium text-white backdrop-blur-sm underline-offset-4 hover:underline"
+          >
+            Already booked? Get your link
+          </button>
         </div>
       </section>
 
       <main>
-        {/* Comparison table — given a real header and full-width band instead
-            of floating as an undersized box on plain background. */}
-        <section className="border-b border-border bg-white px-4 py-16 sm:px-6">
-          <div className="mx-auto max-w-4xl">
-            <div className="text-center">
-              <span className="inline-flex items-center rounded-full border border-primary/20 bg-primary-light px-3.5 py-1 text-xs font-semibold uppercase tracking-wide text-primary">
-                Pick Your Path
+        {/* How the AI test works — an animated walkthrough of the real exam room. */}
+        <section id="how-it-works" className="scroll-mt-20 px-4 py-16 sm:px-6 sm:py-20">
+          <div className="mx-auto max-w-6xl">
+            <div className="mx-auto max-w-2xl text-center">
+              <span className="inline-flex items-center rounded-full border border-accent/20 bg-accent-light px-3.5 py-1 text-xs font-semibold uppercase tracking-wide text-accent">
+                How it actually works
               </span>
-              <h2 className="mt-4 text-3xl font-bold text-text-primary">
-                Two Ways to Practise
+              <h2 className="mt-4 text-3xl font-bold text-text-primary sm:text-4xl">
+                From &ldquo;hello&rdquo; to band score in one sitting
               </h2>
-              <p className="mt-2 text-text-secondary">
-                Same IELTS speaking format, different pace and price.
+              <p className="mt-3 text-text-secondary">
+                Here&apos;s the exam room you&apos;ll be in. Click any step to jump to it.
               </p>
             </div>
-
-            <div className="mt-8 overflow-hidden rounded-2xl border border-border shadow-sm">
-              <table className="w-full text-left text-sm">
-                <thead>
-                  <tr className="border-b border-border bg-background">
-                    <th className="px-5 py-3.5 font-semibold text-text-primary"> </th>
-                    <th className="px-5 py-3.5 font-semibold text-accent">AI Mock Test</th>
-                    <th className="px-5 py-3.5 font-semibold text-primary">Human Session</th>
-                  </tr>
-                </thead>
-                <tbody className="text-text-secondary">
-                  <tr className="border-b border-border">
-                    <td className="px-5 py-3.5 font-medium text-text-primary">Examiner</td>
-                    <td className="px-5 py-3.5">AI avatar</td>
-                    <td className="px-5 py-3.5">Real human examiner</td>
-                  </tr>
-                  <tr className="border-b border-border">
-                    <td className="px-5 py-3.5 font-medium text-text-primary">Scheduling</td>
-                    <td className="px-5 py-3.5">Instant, no slot needed</td>
-                    <td className="px-5 py-3.5">Requires slot booking</td>
-                  </tr>
-                  <tr className="border-b border-border">
-                    <td className="px-5 py-3.5 font-medium text-text-primary">Results</td>
-                    <td className="px-5 py-3.5">Instant, auto-generated</td>
-                    <td className="px-5 py-3.5">Within 72 hours</td>
-                  </tr>
-                  <tr>
-                    <td className="px-5 py-3.5 font-medium text-text-primary">Best for</td>
-                    <td className="px-5 py-3.5">Affordable regular practice</td>
-                    <td className="px-5 py-3.5">A serious pre-exam attempt</td>
-                  </tr>
-                </tbody>
-              </table>
+            <div className="mt-12">
+              <ExamDemo />
             </div>
           </div>
         </section>
 
-        {/* How It Works — alternating to a tinted background band for rhythm
-            instead of another plain-white card. */}
-        <section className="bg-primary-light/40 px-4 py-16 sm:px-6">
+        {/* What you get back */}
+        <section className="border-y border-border bg-white px-4 py-16 sm:px-6 sm:py-20">
           <div className="mx-auto max-w-5xl">
-            <h2 className="text-center text-3xl font-bold text-text-primary">
-              How It Works
-            </h2>
-            <div className="mt-10 grid gap-8 sm:grid-cols-3">
-              {steps.map((step) => (
-                <div
-                  key={step.number}
-                  className="rounded-2xl border border-white bg-white p-6 shadow-sm"
-                >
-                  <div className="flex h-10 w-10 items-center justify-center rounded-full bg-primary-light text-primary">
-                    <step.icon className="h-5 w-5" />
-                  </div>
-                  <p className="mt-4 text-xs font-semibold uppercase tracking-wide text-text-muted">
-                    Step {step.number}
-                  </p>
-                  <h3 className="mt-1 text-lg font-semibold text-text-primary">
-                    {step.title}
-                  </h3>
-                  <p className="mt-2 text-sm text-text-secondary">
-                    {step.description}
-                  </p>
-                </div>
-              ))}
-            </div>
-          </div>
-        </section>
-
-        {/* Feature highlights on plain white for contrast against the tinted
-            section above/below. */}
-        <section className="bg-white px-4 py-16 sm:px-6">
-          <div className="mx-auto grid max-w-5xl gap-6 sm:grid-cols-2">
-            <div className="rounded-2xl border border-border bg-background p-8">
-              <h3 className="text-xl font-semibold text-text-primary">
-                Real Examiners, Real Format
-              </h3>
-              <p className="mt-2 text-sm text-text-secondary">
-                Every session follows the exact IELTS speaking structure —
-                Parts 1, 2, and 3 — conducted live over Google Meet by a
-                certified examiner.
-              </p>
-              <div className="mt-6 rounded-xl border border-border bg-white p-4 shadow-sm">
-                <div className="flex items-center justify-between">
-                  <div>
-                    <p className="text-sm font-semibold text-text-primary">
-                      Nusrat Jahan
-                    </p>
-                    <p className="text-xs text-text-secondary">
-                      Sat, Aug 29 · 3:00 PM
-                    </p>
-                  </div>
-                  <div className="flex h-9 w-9 items-center justify-center rounded-full bg-primary-light text-primary">
-                    <Video className="h-4 w-4" />
-                  </div>
-                </div>
-                <div className="mt-3 flex h-9 w-full items-center justify-center rounded-lg bg-primary text-xs font-medium text-white">
-                  Join Google Meet
-                </div>
-              </div>
-            </div>
-
-            <div className="rounded-2xl border border-border bg-background p-8">
-              <h3 className="text-xl font-semibold text-text-primary">
-                Your Band Score, Fast
-              </h3>
-              <p className="mt-2 text-sm text-text-secondary">
-                Get a 10-minute live feedback session right after your test,
-                plus a downloadable result report within 72 hours.
-              </p>
-              <div className="mt-6 rounded-xl border border-border bg-white p-4 shadow-sm">
-                <p className="text-xs font-medium uppercase tracking-wide text-text-muted">
-                  Overall Band Score
-                </p>
-                <p className="mt-1 text-3xl font-bold text-accent">7.5</p>
-                <div className="mt-3 flex items-center gap-2 rounded-lg border border-accent/30 bg-accent-light px-3 py-2 text-sm font-medium text-accent">
-                  <Download className="h-4 w-4" />
-                  speaking-result.pdf
-                </div>
-              </div>
-            </div>
-          </div>
-        </section>
-
-        {/* FAQ — tinted band again for the alternating rhythm, ends the page
-            content before the dark footer. */}
-        <section className="bg-primary-light/40 px-4 py-16 sm:px-6">
-          <div className="mx-auto max-w-2xl">
-            <div className="text-center">
-              <span className="inline-flex items-center rounded-full border border-primary/20 bg-white px-3.5 py-1 text-xs font-semibold uppercase tracking-wide text-primary">
-                Got Questions?
+            <div className="mx-auto max-w-2xl text-center">
+              <span className="inline-flex items-center rounded-full border border-accent/20 bg-accent-light px-3.5 py-1 text-xs font-semibold uppercase tracking-wide text-accent">
+                Your result
               </span>
-              <h2 className="mt-4 text-3xl font-bold text-text-primary">
-                Frequently Asked Questions
+              <h2 className="mt-4 text-3xl font-bold text-text-primary sm:text-4xl">
+                Feedback you can actually act on
               </h2>
+              <p className="mt-3 text-text-secondary">
+                Not just a number — every criterion comes with the reasoning, quotes from your own
+                answers, and one concrete thing to practise. Explore a sample:
+              </p>
             </div>
+            <div className="mt-10">
+              <SampleResult />
+            </div>
+          </div>
+        </section>
+
+        {/* Two ways to practise */}
+        <section className="px-4 py-16 sm:px-6 sm:py-20">
+          <div className="mx-auto max-w-5xl">
+            <div className="text-center">
+              <h2 className="text-3xl font-bold text-text-primary">Two ways to practise</h2>
+              <p className="mt-2 text-text-secondary">Same IELTS speaking format, different pace and price.</p>
+            </div>
+
+            <div className="mt-10 grid gap-5 md:grid-cols-2">
+              <div className="flex flex-col rounded-2xl border-2 border-accent/40 bg-white p-6 shadow-sm">
+                <div className="flex items-center justify-between">
+                  <span className="inline-flex items-center gap-1.5 rounded-full bg-accent-light px-2.5 py-1 text-[11px] font-semibold uppercase tracking-wide text-accent">
+                    <Sparkles className="h-3 w-3" /> Instant
+                  </span>
+                  <span className="text-2xl font-bold text-accent">{AI_TEST_FEE}</span>
+                </div>
+                <h3 className="mt-3 text-xl font-bold text-text-primary">AI Mock Test</h3>
+                <ul className="mt-3 flex-1 space-y-2 text-sm text-text-secondary">
+                  {[
+                    "AI examiner over video, any time — no booking",
+                    "Band score + feedback in minutes",
+                    "Full PDF report with your transcript",
+                    "Best for affordable, regular practice",
+                  ].map((item) => (
+                    <li key={item} className="flex gap-2">
+                      <CheckCircle className="mt-0.5 h-4 w-4 shrink-0 text-accent" />
+                      {item}
+                    </li>
+                  ))}
+                </ul>
+                <Button asChild size="lg" variant="accent" className="mt-6 w-full">
+                  <Link href="/ai-test">
+                    Start Now <ArrowRight className="h-4 w-4" />
+                  </Link>
+                </Button>
+              </div>
+
+              <div className="flex flex-col rounded-2xl border border-border bg-white p-6 shadow-sm">
+                <div className="flex items-center justify-between">
+                  <span className="inline-flex items-center gap-1.5 rounded-full bg-primary-light px-2.5 py-1 text-[11px] font-semibold uppercase tracking-wide text-primary">
+                    <Video className="h-3 w-3" /> Live
+                  </span>
+                  <span className="text-2xl font-bold text-primary">{SESSION_FEE}</span>
+                </div>
+                <h3 className="mt-3 text-xl font-bold text-text-primary">Human Session</h3>
+                <ol className="mt-3 flex-1 space-y-3">
+                  {humanSteps.map((step, i) => (
+                    <li key={step.title} className="flex gap-3">
+                      <span className="flex h-6 w-6 shrink-0 items-center justify-center rounded-full bg-primary-light text-xs font-bold text-primary">
+                        {i + 1}
+                      </span>
+                      <div>
+                        <p className="text-sm font-semibold text-text-primary">{step.title}</p>
+                        <p className="text-sm text-text-secondary">{step.description}</p>
+                      </div>
+                    </li>
+                  ))}
+                </ol>
+                <Button size="lg" variant="secondary" className="mt-6 w-full" onClick={() => setBookingOpen(true)}>
+                  Book a Slot
+                </Button>
+              </div>
+            </div>
+          </div>
+        </section>
+
+        {/* FAQ */}
+        <section className="border-t border-border bg-white px-4 py-16 sm:px-6 sm:py-20">
+          <div className="mx-auto max-w-2xl">
+            <h2 className="text-center text-3xl font-bold text-text-primary">Frequently asked questions</h2>
             <Accordion type="single" collapsible className="mt-8 space-y-3">
               {faqs.map((faq, i) => (
-                <AccordionItem key={i} value={`item-${i}`} className="border-border bg-white">
+                <AccordionItem key={faq.question} value={`item-${i}`} className="border-border bg-background">
                   <AccordionTrigger>{faq.question}</AccordionTrigger>
                   <AccordionContent>{faq.answer}</AccordionContent>
                 </AccordionItem>
               ))}
             </Accordion>
+          </div>
+        </section>
+
+        {/* Closing CTA */}
+        <section className="px-4 py-16 sm:px-6">
+          <div className="mx-auto max-w-4xl rounded-3xl bg-gradient-to-br from-dune-600 to-dune-700 px-6 py-12 text-center shadow-lg sm:px-12">
+            <h2 className="text-3xl font-bold text-white">Ready to hear your band score?</h2>
+            <p className="mx-auto mt-3 max-w-lg text-white/80">
+              Fifteen minutes, three parts, one detailed report. No slot to wait for.
+            </p>
+            <Button asChild size="lg" className="mt-7 bg-white text-dune-700 hover:bg-white/90">
+              <Link href="/ai-test">
+                Start AI Mock Test <ArrowRight className="h-4 w-4" />
+              </Link>
+            </Button>
           </div>
         </section>
       </main>
