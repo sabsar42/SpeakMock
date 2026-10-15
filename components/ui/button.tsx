@@ -3,15 +3,20 @@ import { Slot } from "@radix-ui/react-slot";
 import { cva, type VariantProps } from "class-variance-authority";
 import { cn } from "@/lib/utils";
 
+const CRIMSON_GRADIENT =
+  "bg-gradient-to-br from-[#C81E4C] via-[#9F1239] to-[#5C0B22] text-white shadow-[0_6px_18px_-6px_rgba(159,18,57,0.6)] hover:brightness-110 hover:shadow-[0_8px_22px_-6px_rgba(159,18,57,0.75)]";
+
 const buttonVariants = cva(
   "inline-flex items-center justify-center gap-2 whitespace-nowrap rounded-lg text-sm font-medium transition-all disabled:opacity-50 disabled:cursor-not-allowed active:scale-[0.98]",
   {
     variants: {
       variant: {
-        primary: "bg-primary text-white hover:bg-primary-hover shadow-sm",
+        // Both crimson variants share one gradient (bright crimson → deep
+        // wine) and soft glow, so every red button on the site matches.
+        primary: CRIMSON_GRADIENT,
         secondary:
           "bg-white border border-sky-300 text-primary hover:bg-primary-light",
-        accent: "bg-accent text-white hover:bg-accent-hover",
+        accent: CRIMSON_GRADIENT,
         danger: "bg-error text-white hover:bg-red-600",
         ghost: "hover:bg-gray-100 text-text-primary",
         outline: "border border-border bg-white text-text-primary hover:bg-gray-50",

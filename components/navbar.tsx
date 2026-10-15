@@ -48,11 +48,11 @@ export function Navbar({ transparent = false, onBookClick }: NavbarProps) {
               variant={transparent ? "accent" : "primary"}
               onClick={onBookClick}
             >
-              Book a Session
+              Book with Human
             </Button>
           ) : (
             <Button asChild size="sm" variant={transparent ? "accent" : "primary"}>
-              <Link href="/book">Book a Session</Link>
+              <Link href="/book">Book with Human</Link>
             </Button>
           )}
         </div>

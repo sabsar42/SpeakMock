@@ -47,7 +47,7 @@ export function Footer() {
               </li>
               <li>
                 <Link href="/book" className="hover:text-white">
-                  Book a Session
+                  Book with Human
                 </Link>
               </li>
               <li>
